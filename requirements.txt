@@ -1,7 +1,51 @@
-# Project Manager App Requirements
-streamlit>=1.28.0
-pyodbc>=4.0.34
+# 🚀 Project Manager Pro v3.0 - Dependencies
+
+# Core Framework
+streamlit>=1.30.0
+streamlit-authenticator>=0.2.0
+streamlit-option-menu>=0.3.0
+
+# Database & ORM
+pyodbc>=4.0.35
+SQLAlchemy>=2.0.0
+pymssql>=2.2.0
+
+# Authentication & Security
+bcrypt>=4.0.0
+cryptography>=41.0.0
+passlib>=1.7.4
+
+# Data Processing
 pandas>=2.0.0
+numpy>=1.24.0
+
+# Visualization
 plotly>=5.15.0
-bcrypt>=4.0.1
-python-dateutil>=2.8.2
+altair>=5.0.0
+
+# Date & Time
+python-dateutil>=2.8.0
+pytz>=2023.3
+
+# Utilities
+python-dotenv>=1.0.0
+toml>=0.10.2
+pydantic>=2.0.0
+
+# Development
+pytest>=7.4.0
+black>=23.0.0
+flake8>=6.0.0
+
+# Production
+gunicorn>=21.0.0
+uvicorn>=0.23.0
+
+# Optional Enhancements
+openpyxl>=3.1.0  # Excel export
+Pillow>=10.0.0   # Image processing
+requests>=2.31.0  # HTTP requests
+
+# Monitoring & Logging
+loguru>=0.7.0
+prometheus-client>=0.17.0
