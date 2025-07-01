@@ -1,62 +1,49 @@
--- 🚀 Project Manager Pro v3.0 - Database Setup Script
--- Complete database schema with enhanced features and security
+-- Project Manager Pro v3.0 - Database Setup Script
+-- SQL Server Database Schema
 
--- Create database if it doesn't exist
-IF NOT EXISTS (SELECT name FROM sys.databases WHERE name = 'ProjectManagerPro')
+-- Create database if not exists
+IF NOT EXISTS (SELECT name FROM sys.databases WHERE name = 'ProjectManagerDB')
 BEGIN
-    CREATE DATABASE ProjectManagerPro;
-    PRINT 'Database ProjectManagerPro created successfully';
+    CREATE DATABASE ProjectManagerDB;
 END
 GO
 
-USE ProjectManagerPro;
+USE ProjectManagerDB;
 GO
 
--- Enable advanced features
-EXEC sp_configure 'show advanced options', 1;
-RECONFIGURE;
-GO
-
--- ============================================================================
--- TABLES CREATION
--- ============================================================================
-
--- Users table with comprehensive user management
-IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='Users' AND xtype='U')
+-- Create Users table
+IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'Users')
 BEGIN
     CREATE TABLE Users (
         UserID INT IDENTITY(1,1) PRIMARY KEY,
         Username NVARCHAR(50) NOT NULL UNIQUE,
         PasswordHash NVARCHAR(255) NOT NULL,
         Email NVARCHAR(255) UNIQUE,
-        FirstName NVARCHAR(50),
-        LastName NVARCHAR(50),
-        Role NVARCHAR(20) DEFAULT 'User' CHECK (Role IN ('Admin', 'Manager', 'User')),
+        Role NVARCHAR(20) DEFAULT 'User' CHECK (Role IN ('Admin', 'Manager', 'User', 'Viewer')),
         Active BIT DEFAULT 1,
         CreatedDate DATETIME2 DEFAULT GETDATE(),
         LastLoginDate DATETIME2,
-        PasswordChangedDate DATETIME2 DEFAULT GETDATE(),
+        PasswordChangedDate DATETIME2,
         ProfilePicture NVARCHAR(255),
-        Phone NVARCHAR(20),
-        Department NVARCHAR(50),
-        JobTitle NVARCHAR(100),
-        FailedLoginAttempts INT DEFAULT 0,
-        LockedUntil DATETIME2,
-        LastModifiedDate DATETIME2 DEFAULT GETDATE(),
-        LastModifiedBy INT,
-        Timezone NVARCHAR(50) DEFAULT 'UTC',
-        Language NVARCHAR(10) DEFAULT 'en',
-        NotificationPreferences NVARCHAR(MAX), -- JSON format
-        TwoFactorEnabled BIT DEFAULT 0,
-        TwoFactorSecret NVARCHAR(255)
+        
+        -- Constraints
+        CONSTRAINT CK_Users_Email CHECK (Email LIKE '%@%.%'),
+        CONSTRAINT CK_Users_Username CHECK (LEN(Username) >= 3)
     );
+    
+    -- Create indexes for Users table
+    CREATE INDEX IX_Users_Username ON Users(Username);
+    CREATE INDEX IX_Users_Email ON Users(Email);
+    CREATE INDEX IX_Users_Role ON Users(Role);
+    CREATE INDEX IX_Users_Active ON Users(Active);
+    CREATE INDEX IX_Users_LastLogin ON Users(LastLoginDate);
     
     PRINT 'Users table created successfully';
 END
 GO
 
--- Projects table with enhanced project management features
-IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='Projects' AND xtype='U')
+-- Create Projects table
+IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'Projects')
 BEGIN
     CREATE TABLE Projects (
         ProjectID INT IDENTITY(1,1) PRIMARY KEY,
@@ -64,40 +51,37 @@ BEGIN
         Description NVARCHAR(MAX),
         StartDate DATE,
         EndDate DATE,
-        Status NVARCHAR(50) DEFAULT 'Planning' CHECK (Status IN ('Planning', 'Active', 'On Hold', 'Completed', 'Cancelled')),
-        Priority NVARCHAR(20) DEFAULT 'Medium' CHECK (Priority IN ('Low', 'Medium', 'High', 'Critical')),
+        Status NVARCHAR(50) DEFAULT 'Planning' CHECK (Status IN ('Planning', 'Active', 'Completed', 'On-Hold', 'Cancelled')),
+        Priority NVARCHAR(20) DEFAULT 'Medium' CHECK (Priority IN ('Critical', 'High', 'Medium', 'Low')),
         Budget DECIMAL(15,2),
-        ActualCost DECIMAL(15,2) DEFAULT 0,
         ClientName NVARCHAR(100),
-        ClientEmail NVARCHAR(255),
-        ClientPhone NVARCHAR(20),
         Tags NVARCHAR(500),
-        Progress INT DEFAULT 0 CHECK (Progress >= 0 AND Progress <= 100),
-        EstimatedHours DECIMAL(8,2),
-        ActualHours DECIMAL(8,2) DEFAULT 0,
         CreatedDate DATETIME2 DEFAULT GETDATE(),
         CreatedBy INT NOT NULL,
         LastModifiedDate DATETIME2 DEFAULT GETDATE(),
-        LastModifiedBy INT,
-        CompletedDate DATETIME2,
-        IsTemplate BIT DEFAULT 0,
-        TemplateID INT,
-        Color NVARCHAR(7) DEFAULT '#667eea',
-        Risk NVARCHAR(20) DEFAULT 'Low' CHECK (Risk IN ('Low', 'Medium', 'High')),
-        Category NVARCHAR(50),
-        BusinessValue NVARCHAR(20) DEFAULT 'Medium' CHECK (BusinessValue IN ('Low', 'Medium', 'High')),
-        Methodology NVARCHAR(50) DEFAULT 'Agile',
+        
+        -- Foreign key constraints
         CONSTRAINT FK_Projects_CreatedBy FOREIGN KEY (CreatedBy) REFERENCES Users(UserID),
-        CONSTRAINT FK_Projects_LastModifiedBy FOREIGN KEY (LastModifiedBy) REFERENCES Users(UserID),
-        CONSTRAINT FK_Projects_Template FOREIGN KEY (TemplateID) REFERENCES Projects(ProjectID)
+        
+        -- Check constraints
+        CONSTRAINT CK_Projects_Budget CHECK (Budget >= 0),
+        CONSTRAINT CK_Projects_Dates CHECK (EndDate IS NULL OR StartDate IS NULL OR EndDate >= StartDate),
+        CONSTRAINT CK_Projects_Name CHECK (LEN(ProjectName) >= 3)
     );
+    
+    -- Create indexes for Projects table
+    CREATE INDEX IX_Projects_Status ON Projects(Status);
+    CREATE INDEX IX_Projects_Priority ON Projects(Priority);
+    CREATE INDEX IX_Projects_CreatedBy ON Projects(CreatedBy);
+    CREATE INDEX IX_Projects_Dates ON Projects(StartDate, EndDate);
+    CREATE INDEX IX_Projects_Client ON Projects(ClientName);
     
     PRINT 'Projects table created successfully';
 END
 GO
 
--- Tasks table with comprehensive task management
-IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='Tasks' AND xtype='U')
+-- Create Tasks table
+IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'Tasks')
 BEGIN
     CREATE TABLE Tasks (
         TaskID INT IDENTITY(1,1) PRIMARY KEY,
@@ -106,257 +90,363 @@ BEGIN
         Description NVARCHAR(MAX),
         StartDate DATE,
         EndDate DATE,
-        DueDate DATE,
         AssigneeID INT,
-        Status NVARCHAR(50) DEFAULT 'To Do' CHECK (Status IN ('To Do', 'In Progress', 'Review', 'Testing', 'Completed', 'Cancelled')),
-        Priority NVARCHAR(20) DEFAULT 'Medium' CHECK (Priority IN ('Low', 'Medium', 'High', 'Critical')),
-        Progress INT DEFAULT 0 CHECK (Progress >= 0 AND Progress <= 100),
+        Status NVARCHAR(50) DEFAULT 'To Do' CHECK (Status IN ('To Do', 'In Progress', 'In Review', 'Testing', 'Done', 'Cancelled', 'Blocked')),
+        Priority NVARCHAR(20) DEFAULT 'Medium' CHECK (Priority IN ('Critical', 'High', 'Medium', 'Low')),
+        Progress INT DEFAULT 0,
         EstimatedHours DECIMAL(5,1),
-        ActualHours DECIMAL(5,1) DEFAULT 0,
-        Dependencies NVARCHAR(MAX), -- Comma-separated TaskIDs
+        ActualHours DECIMAL(5,1),
+        Dependencies NVARCHAR(MAX),
         Labels NVARCHAR(255),
-        ParentTaskID INT,
-        Order_Index INT DEFAULT 0,
         CreatedDate DATETIME2 DEFAULT GETDATE(),
         CreatedBy INT NOT NULL,
         LastModifiedDate DATETIME2 DEFAULT GETDATE(),
-        LastModifiedBy INT,
-        CompletedDate DATETIME2,
-        IsRecurring BIT DEFAULT 0,
-        RecurrencePattern NVARCHAR(100),
-        StoryPoints INT,
-        Complexity NVARCHAR(20) DEFAULT 'Medium' CHECK (Complexity IN ('Low', 'Medium', 'High')),
-        TaskType NVARCHAR(50) DEFAULT 'Task',
-        BlockedReason NVARCHAR(500),
-        CONSTRAINT FK_Tasks_Project FOREIGN KEY (ProjectID) REFERENCES Projects(ProjectID) ON DELETE CASCADE,
-        CONSTRAINT FK_Tasks_Assignee FOREIGN KEY (AssigneeID) REFERENCES Users(UserID),
+        
+        -- Foreign key constraints
+        CONSTRAINT FK_Tasks_ProjectID FOREIGN KEY (ProjectID) REFERENCES Projects(ProjectID) ON DELETE CASCADE,
+        CONSTRAINT FK_Tasks_AssigneeID FOREIGN KEY (AssigneeID) REFERENCES Users(UserID),
         CONSTRAINT FK_Tasks_CreatedBy FOREIGN KEY (CreatedBy) REFERENCES Users(UserID),
-        CONSTRAINT FK_Tasks_LastModifiedBy FOREIGN KEY (LastModifiedBy) REFERENCES Users(UserID),
-        CONSTRAINT FK_Tasks_Parent FOREIGN KEY (ParentTaskID) REFERENCES Tasks(TaskID)
+        
+        -- Check constraints
+        CONSTRAINT CK_Tasks_Progress CHECK (Progress >= 0 AND Progress <= 100),
+        CONSTRAINT CK_Tasks_Hours CHECK (EstimatedHours IS NULL OR EstimatedHours >= 0),
+        CONSTRAINT CK_Tasks_ActualHours CHECK (ActualHours IS NULL OR ActualHours >= 0),
+        CONSTRAINT CK_Tasks_Dates CHECK (EndDate IS NULL OR StartDate IS NULL OR EndDate >= StartDate),
+        CONSTRAINT CK_Tasks_Name CHECK (LEN(TaskName) >= 3)
     );
+    
+    -- Create indexes for Tasks table
+    CREATE INDEX IX_Tasks_ProjectID ON Tasks(ProjectID);
+    CREATE INDEX IX_Tasks_AssigneeID ON Tasks(AssigneeID);
+    CREATE INDEX IX_Tasks_Status ON Tasks(Status);
+    CREATE INDEX IX_Tasks_Priority ON Tasks(Priority);
+    CREATE INDEX IX_Tasks_Dates ON Tasks(StartDate, EndDate);
+    CREATE INDEX IX_Tasks_Progress ON Tasks(Progress);
+    CREATE INDEX IX_Tasks_CreatedBy ON Tasks(CreatedBy);
     
     PRINT 'Tasks table created successfully';
 END
 GO
 
--- Project Members table for team management
-IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='ProjectMembers' AND xtype='U')
+-- Create ProjectMembers table (for team assignments)
+IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'ProjectMembers')
 BEGIN
     CREATE TABLE ProjectMembers (
         ProjectMemberID INT IDENTITY(1,1) PRIMARY KEY,
         ProjectID INT NOT NULL,
         UserID INT NOT NULL,
-        Role NVARCHAR(50) DEFAULT 'Member' CHECK (Role IN ('Owner', 'Manager', 'Member', 'Observer')),
-        JoinedDate DATETIME2 DEFAULT GETDATE(),
-        LeftDate DATETIME2,
-        IsActive BIT DEFAULT 1,
-        Permissions NVARCHAR(MAX), -- JSON format for granular permissions
-        HourlyRate DECIMAL(8,2),
-        CONSTRAINT FK_ProjectMembers_Project FOREIGN KEY (ProjectID) REFERENCES Projects(ProjectID) ON DELETE CASCADE,
-        CONSTRAINT FK_ProjectMembers_User FOREIGN KEY (UserID) REFERENCES Users(UserID) ON DELETE CASCADE,
-        CONSTRAINT UK_ProjectMembers_Unique UNIQUE(ProjectID, UserID)
+        Role NVARCHAR(50) DEFAULT 'Member' CHECK (Role IN ('Project Manager', 'Lead', 'Member', 'Observer')),
+        AssignedDate DATETIME2 DEFAULT GETDATE(),
+        
+        -- Foreign key constraints
+        CONSTRAINT FK_ProjectMembers_ProjectID FOREIGN KEY (ProjectID) REFERENCES Projects(ProjectID) ON DELETE CASCADE,
+        CONSTRAINT FK_ProjectMembers_UserID FOREIGN KEY (UserID) REFERENCES Users(UserID),
+        
+        -- Unique constraint (one role per user per project)
+        CONSTRAINT UQ_ProjectMembers_User_Project UNIQUE (ProjectID, UserID)
     );
+    
+    -- Create indexes
+    CREATE INDEX IX_ProjectMembers_ProjectID ON ProjectMembers(ProjectID);
+    CREATE INDEX IX_ProjectMembers_UserID ON ProjectMembers(UserID);
     
     PRINT 'ProjectMembers table created successfully';
 END
 GO
 
--- Comments table for collaboration
-IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='Comments' AND xtype='U')
+-- Create Comments table (for project/task comments)
+IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'Comments')
 BEGIN
     CREATE TABLE Comments (
         CommentID INT IDENTITY(1,1) PRIMARY KEY,
         ProjectID INT,
         TaskID INT,
         UserID INT NOT NULL,
-        Comment NVARCHAR(MAX) NOT NULL,
-        CommentType NVARCHAR(20) DEFAULT 'General' CHECK (CommentType IN ('General', 'Update', 'Issue', 'Question')),
+        CommentText NVARCHAR(MAX) NOT NULL,
         CreatedDate DATETIME2 DEFAULT GETDATE(),
-        LastModifiedDate DATETIME2,
-        LastModifiedBy INT,
-        IsDeleted BIT DEFAULT 0,
-        ParentCommentID INT,
-        Mentions NVARCHAR(MAX), -- JSON array of mentioned user IDs
-        Attachments NVARCHAR(MAX), -- JSON array of attachment references
-        CONSTRAINT FK_Comments_Project FOREIGN KEY (ProjectID) REFERENCES Projects(ProjectID) ON DELETE CASCADE,
-        CONSTRAINT FK_Comments_Task FOREIGN KEY (TaskID) REFERENCES Tasks(TaskID) ON DELETE CASCADE,
-        CONSTRAINT FK_Comments_User FOREIGN KEY (UserID) REFERENCES Users(UserID),
-        CONSTRAINT FK_Comments_LastModifiedBy FOREIGN KEY (LastModifiedBy) REFERENCES Users(UserID),
-        CONSTRAINT FK_Comments_Parent FOREIGN KEY (ParentCommentID) REFERENCES Comments(CommentID),
-        CONSTRAINT CK_Comments_Reference CHECK (ProjectID IS NOT NULL OR TaskID IS NOT NULL)
+        
+        -- Foreign key constraints
+        CONSTRAINT FK_Comments_ProjectID FOREIGN KEY (ProjectID) REFERENCES Projects(ProjectID) ON DELETE CASCADE,
+        CONSTRAINT FK_Comments_TaskID FOREIGN KEY (TaskID) REFERENCES Tasks(TaskID) ON DELETE CASCADE,
+        CONSTRAINT FK_Comments_UserID FOREIGN KEY (UserID) REFERENCES Users(UserID),
+        
+        -- Check constraint (comment must be for either project or task, not both)
+        CONSTRAINT CK_Comments_Target CHECK ((ProjectID IS NOT NULL AND TaskID IS NULL) OR (ProjectID IS NULL AND TaskID IS NOT NULL))
     );
+    
+    -- Create indexes
+    CREATE INDEX IX_Comments_ProjectID ON Comments(ProjectID);
+    CREATE INDEX IX_Comments_TaskID ON Comments(TaskID);
+    CREATE INDEX IX_Comments_UserID ON Comments(UserID);
+    CREATE INDEX IX_Comments_CreatedDate ON Comments(CreatedDate);
     
     PRINT 'Comments table created successfully';
 END
 GO
 
--- Time Logs table for time tracking
-IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='TimeLogs' AND xtype='U')
-BEGIN
-    CREATE TABLE TimeLogs (
-        TimeLogID INT IDENTITY(1,1) PRIMARY KEY,
-        TaskID INT NOT NULL,
-        UserID INT NOT NULL,
-        StartTime DATETIME2 NOT NULL,
-        EndTime DATETIME2,
-        Duration DECIMAL(5,2), -- In hours
-        Description NVARCHAR(500),
-        LogDate DATE DEFAULT CAST(GETDATE() AS DATE),
-        CreatedDate DATETIME2 DEFAULT GETDATE(),
-        LastModifiedDate DATETIME2 DEFAULT GETDATE(),
-        IsBillable BIT DEFAULT 1,
-        HourlyRate DECIMAL(8,2),
-        Status NVARCHAR(20) DEFAULT 'Active' CHECK (Status IN ('Active', 'Paused', 'Completed')),
-        ApprovedBy INT,
-        ApprovedDate DATETIME2,
-        CONSTRAINT FK_TimeLogs_Task FOREIGN KEY (TaskID) REFERENCES Tasks(TaskID) ON DELETE CASCADE,
-        CONSTRAINT FK_TimeLogs_User FOREIGN KEY (UserID) REFERENCES Users(UserID),
-        CONSTRAINT FK_TimeLogs_ApprovedBy FOREIGN KEY (ApprovedBy) REFERENCES Users(UserID)
-    );
-    
-    PRINT 'TimeLogs table created successfully';
-END
-GO
-
--- Attachments table for file management
-IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='Attachments' AND xtype='U')
+-- Create Attachments table
+IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'Attachments')
 BEGIN
     CREATE TABLE Attachments (
         AttachmentID INT IDENTITY(1,1) PRIMARY KEY,
         ProjectID INT,
         TaskID INT,
-        CommentID INT,
         FileName NVARCHAR(255) NOT NULL,
-        OriginalFileName NVARCHAR(255) NOT NULL,
         FilePath NVARCHAR(500) NOT NULL,
-        FileSize BIGINT NOT NULL,
+        FileSize BIGINT,
         FileType NVARCHAR(50),
-        MimeType NVARCHAR(100),
-        FileHash NVARCHAR(256), -- SHA-256 hash for integrity
         UploadedBy INT NOT NULL,
         UploadedDate DATETIME2 DEFAULT GETDATE(),
-        IsDeleted BIT DEFAULT 0,
-        DeletedBy INT,
-        DeletedDate DATETIME2,
-        DownloadCount INT DEFAULT 0,
-        LastAccessDate DATETIME2,
-        CONSTRAINT FK_Attachments_Project FOREIGN KEY (ProjectID) REFERENCES Projects(ProjectID) ON DELETE CASCADE,
-        CONSTRAINT FK_Attachments_Task FOREIGN KEY (TaskID) REFERENCES Tasks(TaskID) ON DELETE CASCADE,
-        CONSTRAINT FK_Attachments_Comment FOREIGN KEY (CommentID) REFERENCES Comments(CommentID) ON DELETE CASCADE,
+        
+        -- Foreign key constraints
+        CONSTRAINT FK_Attachments_ProjectID FOREIGN KEY (ProjectID) REFERENCES Projects(ProjectID) ON DELETE CASCADE,
+        CONSTRAINT FK_Attachments_TaskID FOREIGN KEY (TaskID) REFERENCES Tasks(TaskID) ON DELETE CASCADE,
         CONSTRAINT FK_Attachments_UploadedBy FOREIGN KEY (UploadedBy) REFERENCES Users(UserID),
-        CONSTRAINT FK_Attachments_DeletedBy FOREIGN KEY (DeletedBy) REFERENCES Users(UserID)
+        
+        -- Check constraint
+        CONSTRAINT CK_Attachments_Target CHECK ((ProjectID IS NOT NULL AND TaskID IS NULL) OR (ProjectID IS NULL AND TaskID IS NOT NULL)),
+        CONSTRAINT CK_Attachments_FileSize CHECK (FileSize >= 0)
     );
+    
+    -- Create indexes
+    CREATE INDEX IX_Attachments_ProjectID ON Attachments(ProjectID);
+    CREATE INDEX IX_Attachments_TaskID ON Attachments(TaskID);
+    CREATE INDEX IX_Attachments_UploadedBy ON Attachments(UploadedBy);
     
     PRINT 'Attachments table created successfully';
 END
 GO
 
--- Activity Logs table for audit trail
-IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='ActivityLogs' AND xtype='U')
+-- Create ActivityLog table (for audit trail)
+IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'ActivityLog')
 BEGIN
-    CREATE TABLE ActivityLogs (
-        ActivityLogID INT IDENTITY(1,1) PRIMARY KEY,
-        UserID INT NOT NULL,
-        ProjectID INT,
-        TaskID INT,
-        Action NVARCHAR(100) NOT NULL,
-        Details NVARCHAR(MAX),
+    CREATE TABLE ActivityLog (
+        LogID INT IDENTITY(1,1) PRIMARY KEY,
+        UserID INT,
+        EntityType NVARCHAR(50) NOT NULL CHECK (EntityType IN ('Project', 'Task', 'User', 'Comment', 'Attachment')),
+        EntityID INT NOT NULL,
+        Action NVARCHAR(50) NOT NULL CHECK (Action IN ('Create', 'Update', 'Delete', 'View', 'Assign', 'Complete')),
+        Description NVARCHAR(500),
+        Timestamp DATETIME2 DEFAULT GETDATE(),
         IPAddress NVARCHAR(45),
-        UserAgent NVARCHAR(500),
-        SessionID NVARCHAR(255),
-        CreatedDate DATETIME2 DEFAULT GETDATE(),
-        EntityType NVARCHAR(50),
-        EntityID INT,
-        OldValues NVARCHAR(MAX), -- JSON format
-        NewValues NVARCHAR(MAX), -- JSON format
-        CONSTRAINT FK_ActivityLogs_User FOREIGN KEY (UserID) REFERENCES Users(UserID),
-        CONSTRAINT FK_ActivityLogs_Project FOREIGN KEY (ProjectID) REFERENCES Projects(ProjectID),
-        CONSTRAINT FK_ActivityLogs_Task FOREIGN KEY (TaskID) REFERENCES Tasks(TaskID)
+        
+        -- Foreign key constraint
+        CONSTRAINT FK_ActivityLog_UserID FOREIGN KEY (UserID) REFERENCES Users(UserID)
     );
     
-    PRINT 'ActivityLogs table created successfully';
+    -- Create indexes
+    CREATE INDEX IX_ActivityLog_UserID ON ActivityLog(UserID);
+    CREATE INDEX IX_ActivityLog_EntityType ON ActivityLog(EntityType);
+    CREATE INDEX IX_ActivityLog_Timestamp ON ActivityLog(Timestamp);
+    CREATE INDEX IX_ActivityLog_Action ON ActivityLog(Action);
+    
+    PRINT 'ActivityLog table created successfully';
 END
 GO
 
--- ============================================================================
--- PERFORMANCE INDEXES
--- ============================================================================
-
--- Users indexes
-CREATE INDEX IX_Users_Username ON Users(Username);
-CREATE INDEX IX_Users_Email ON Users(Email);
-CREATE INDEX IX_Users_Role ON Users(Role);
-CREATE INDEX IX_Users_Active ON Users(Active);
-CREATE INDEX IX_Users_LastLoginDate ON Users(LastLoginDate);
-
--- Projects indexes
-CREATE INDEX IX_Projects_Status ON Projects(Status);
-CREATE INDEX IX_Projects_Priority ON Projects(Priority);
-CREATE INDEX IX_Projects_CreatedBy ON Projects(CreatedBy);
-CREATE INDEX IX_Projects_StartDate ON Projects(StartDate);
-CREATE INDEX IX_Projects_EndDate ON Projects(EndDate);
-CREATE INDEX IX_Projects_Category ON Projects(Category);
-
--- Tasks indexes
-CREATE INDEX IX_Tasks_ProjectID ON Tasks(ProjectID);
-CREATE INDEX IX_Tasks_AssigneeID ON Tasks(AssigneeID);
-CREATE INDEX IX_Tasks_Status ON Tasks(Status);
-CREATE INDEX IX_Tasks_Priority ON Tasks(Priority);
-CREATE INDEX IX_Tasks_DueDate ON Tasks(DueDate);
-CREATE INDEX IX_Tasks_ParentTaskID ON Tasks(ParentTaskID);
-
--- Time Logs indexes
-CREATE INDEX IX_TimeLogs_TaskID ON TimeLogs(TaskID);
-CREATE INDEX IX_TimeLogs_UserID ON TimeLogs(UserID);
-CREATE INDEX IX_TimeLogs_LogDate ON TimeLogs(LogDate);
-CREATE INDEX IX_TimeLogs_StartTime ON TimeLogs(StartTime);
-
--- Activity Logs indexes
-CREATE INDEX IX_ActivityLogs_UserID ON ActivityLogs(UserID);
-CREATE INDEX IX_ActivityLogs_ProjectID ON ActivityLogs(ProjectID);
-CREATE INDEX IX_ActivityLogs_TaskID ON ActivityLogs(TaskID);
-CREATE INDEX IX_ActivityLogs_CreatedDate ON ActivityLogs(CreatedDate);
-CREATE INDEX IX_ActivityLogs_Action ON ActivityLogs(Action);
-
-PRINT 'Performance indexes created successfully';
-GO
-
--- ============================================================================
--- DEFAULT DATA
--- ============================================================================
-
--- Insert default admin user
-IF NOT EXISTS (SELECT 1 FROM Users WHERE Username = 'admin')
+-- Create SchemaVersion table (for database versioning)
+IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'SchemaVersion')
 BEGIN
-    INSERT INTO Users (Username, PasswordHash, Email, FirstName, LastName, Role, Active)
-    VALUES ('admin', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LeA8pTQN6C0Sz6.SK', 
-            'admin@projectmanagerpro.com', 'System', 'Administrator', 'Admin', 1);
+    CREATE TABLE SchemaVersion (
+        VersionID INT IDENTITY(1,1) PRIMARY KEY,
+        Version NVARCHAR(20) NOT NULL,
+        Description NVARCHAR(255),
+        AppliedDate DATETIME2 DEFAULT GETDATE()
+    );
     
-    PRINT 'Default admin user created: admin/admin123';
+    -- Insert initial version
+    INSERT INTO SchemaVersion (Version, Description) 
+    VALUES ('3.0.0', 'Initial Project Manager Pro v3.0 schema');
+    
+    PRINT 'SchemaVersion table created successfully';
 END
 GO
 
--- Insert sample project categories
-IF NOT EXISTS (SELECT 1 FROM Projects WHERE ProjectName = 'Sample Project')
+-- Insert default admin user (only if no users exist)
+IF NOT EXISTS (SELECT 1 FROM Users)
 BEGIN
-    DECLARE @AdminID INT = (SELECT UserID FROM Users WHERE Username = 'admin');
+    -- Password: admin123 (BCrypt hashed)
+    INSERT INTO Users (Username, PasswordHash, Email, Role, Active, PasswordChangedDate)
+    VALUES (
+        'admin',
+        '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewXl.dO7.z7.gE6y',
+        'admin@projectmanager.local',
+        'Admin',
+        1,
+        GETDATE()
+    );
     
-    INSERT INTO Projects (ProjectName, Description, Status, Priority, CreatedBy, LastModifiedBy)
-    VALUES ('Sample Project', 'This is a sample project to demonstrate the system capabilities', 
-            'Active', 'High', @AdminID, @AdminID);
-    
-    PRINT 'Sample project created';
+    PRINT 'Default admin user created (Username: admin, Password: admin123)';
 END
 GO
 
-PRINT '🚀 Project Manager Pro v3.0 database setup completed successfully!';
+-- Insert sample demo user
+IF NOT EXISTS (SELECT 1 FROM Users WHERE Username = 'demo')
+BEGIN
+    -- Password: demo123 (BCrypt hashed)
+    INSERT INTO Users (Username, PasswordHash, Email, Role, Active, PasswordChangedDate)
+    VALUES (
+        'demo',
+        '$2b$12$8.xKmn8V7q5z8K5Vn8Kn8.JQ8K5V8K5V8K5V8K5V8K5V8K5V8K5V8K',
+        'demo@projectmanager.local',
+        'Manager',
+        1,
+        GETDATE()
+    );
+    
+    PRINT 'Demo user created (Username: demo, Password: demo123)';
+END
+GO
+
+-- Insert sample project (only if no projects exist)
+IF NOT EXISTS (SELECT 1 FROM Projects)
+BEGIN
+    DECLARE @AdminUserID INT;
+    SELECT @AdminUserID = UserID FROM Users WHERE Username = 'admin';
+    
+    IF @AdminUserID IS NOT NULL
+    BEGIN
+        INSERT INTO Projects (ProjectName, Description, StartDate, EndDate, Status, Priority, Budget, ClientName, CreatedBy)
+        VALUES (
+            'Project Manager Pro Implementation',
+            'Implementation and deployment of the new Project Manager Pro v3.0 system for enterprise project management.',
+            GETDATE(),
+            DATEADD(MONTH, 3, GETDATE()),
+            'Active',
+            'High',
+            50000.00,
+            'Internal IT Department',
+            @AdminUserID
+        );
+        
+        DECLARE @ProjectID INT = SCOPE_IDENTITY();
+        
+        -- Insert sample tasks
+        INSERT INTO Tasks (ProjectID, TaskName, Description, Status, Priority, Progress, EstimatedHours, CreatedBy)
+        VALUES 
+        (@ProjectID, 'Database Setup', 'Configure SQL Server database and create initial schema', 'Done', 'High', 100, 8, @AdminUserID),
+        (@ProjectID, 'User Interface Development', 'Develop modern UI with glassmorphism design', 'In Progress', 'High', 75, 40, @AdminUserID),
+        (@ProjectID, 'Authentication System', 'Implement secure user authentication and authorization', 'Done', 'Critical', 100, 16, @AdminUserID),
+        (@ProjectID, 'Testing & QA', 'Comprehensive testing of all system components', 'To Do', 'Medium', 0, 24, @AdminUserID),
+        (@ProjectID, 'Documentation', 'Create user manuals and technical documentation', 'To Do', 'Low', 0, 12, @AdminUserID);
+        
+        PRINT 'Sample project and tasks created';
+    END
+END
+GO
+
+-- Create views for common queries
+IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.VIEWS WHERE TABLE_NAME = 'vw_ProjectSummary')
+BEGIN
+    EXEC('
+    CREATE VIEW vw_ProjectSummary AS
+    SELECT 
+        p.ProjectID,
+        p.ProjectName,
+        p.Status,
+        p.Priority,
+        p.StartDate,
+        p.EndDate,
+        p.Budget,
+        p.ClientName,
+        u.Username as CreatedBy,
+        COUNT(t.TaskID) as TotalTasks,
+        COUNT(CASE WHEN t.Status = ''Done'' THEN 1 END) as CompletedTasks,
+        CAST(COUNT(CASE WHEN t.Status = ''Done'' THEN 1 END) * 100.0 / NULLIF(COUNT(t.TaskID), 0) AS DECIMAL(5,2)) as CompletionRate,
+        ISNULL(AVG(CAST(t.Progress AS FLOAT)), 0) as AvgProgress
+    FROM Projects p
+    LEFT JOIN Users u ON p.CreatedBy = u.UserID
+    LEFT JOIN Tasks t ON p.ProjectID = t.ProjectID
+    GROUP BY p.ProjectID, p.ProjectName, p.Status, p.Priority, p.StartDate, p.EndDate, p.Budget, p.ClientName, u.Username
+    ');
+    
+    PRINT 'vw_ProjectSummary view created';
+END
+GO
+
+-- Create stored procedures
+IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_NAME = 'sp_GetUserWorkload')
+BEGIN
+    EXEC('
+    CREATE PROCEDURE sp_GetUserWorkload
+        @UserID INT = NULL
+    AS
+    BEGIN
+        SELECT 
+            u.UserID,
+            u.Username,
+            u.Email,
+            u.Role,
+            COUNT(t.TaskID) as AssignedTasks,
+            COUNT(CASE WHEN t.Status NOT IN (''Done'', ''Cancelled'') THEN 1 END) as ActiveTasks,
+            ISNULL(AVG(CAST(t.Progress AS FLOAT)), 0) as AvgProgress,
+            SUM(ISNULL(t.EstimatedHours, 0)) as TotalEstimatedHours,
+            SUM(ISNULL(t.ActualHours, 0)) as TotalActualHours
+        FROM Users u
+        LEFT JOIN Tasks t ON u.UserID = t.AssigneeID
+        WHERE u.Active = 1 AND (@UserID IS NULL OR u.UserID = @UserID)
+        GROUP BY u.UserID, u.Username, u.Email, u.Role
+        ORDER BY AssignedTasks DESC;
+    END
+    ');
+    
+    PRINT 'sp_GetUserWorkload stored procedure created';
+END
+GO
+
+-- Create triggers for audit logging
+IF NOT EXISTS (SELECT * FROM sys.triggers WHERE name = 'tr_Projects_Audit')
+BEGIN
+    EXEC('
+    CREATE TRIGGER tr_Projects_Audit
+    ON Projects
+    AFTER INSERT, UPDATE, DELETE
+    AS
+    BEGIN
+        SET NOCOUNT ON;
+        
+        -- Handle INSERT
+        IF EXISTS (SELECT * FROM inserted) AND NOT EXISTS (SELECT * FROM deleted)
+        BEGIN
+            INSERT INTO ActivityLog (EntityType, EntityID, Action, Description)
+            SELECT ''Project'', ProjectID, ''Create'', ''Project created: '' + ProjectName
+            FROM inserted;
+        END
+        
+        -- Handle UPDATE
+        IF EXISTS (SELECT * FROM inserted) AND EXISTS (SELECT * FROM deleted)
+        BEGIN
+            INSERT INTO ActivityLog (EntityType, EntityID, Action, Description)
+            SELECT ''Project'', i.ProjectID, ''Update'', ''Project updated: '' + i.ProjectName
+            FROM inserted i;
+        END
+        
+        -- Handle DELETE
+        IF NOT EXISTS (SELECT * FROM inserted) AND EXISTS (SELECT * FROM deleted)
+        BEGIN
+            INSERT INTO ActivityLog (EntityType, EntityID, Action, Description)
+            SELECT ''Project'', ProjectID, ''Delete'', ''Project deleted: '' + ProjectName
+            FROM deleted;
+        END
+    END
+    ');
+    
+    PRINT 'tr_Projects_Audit trigger created';
+END
+GO
+
+-- Grant permissions (adjust as needed for your security requirements)
+-- These are basic permissions for the application user
+-- In production, create a dedicated application user with minimal required permissions
+
+PRINT '=================================';
+PRINT 'Database setup completed successfully!';
 PRINT '';
-PRINT 'Default Credentials:';
-PRINT 'Username: admin';
-PRINT 'Password: admin123';
+PRINT 'Default Users Created:';
+PRINT '- Admin: admin / admin123';
+PRINT '- Demo: demo / demo123';
 PRINT '';
-PRINT 'Next Steps:';
-PRINT '1. Update connection string in .streamlit/secrets.toml';
-PRINT '2. Install required Python packages: pip install -r requirements.txt';
-PRINT '3. Run the application: streamlit run app.py';
+PRINT 'Sample project and tasks have been created.';
+PRINT 'You can now run the Project Manager Pro application.';
+PRINT '=================================';
 GO
