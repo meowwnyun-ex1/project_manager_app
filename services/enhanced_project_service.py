@@ -5,13 +5,19 @@ import logging
 from dataclasses import dataclass, asdict
 from enum import Enum
 
-from .enhanced_db_service import get_db_service, with_db_transaction, cached_query, DatabaseException
+from .enhanced_db_service import (
+    get_db_service,
+    with_db_transaction,
+    cached_query,
+    DatabaseException,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class ProjectStatus(Enum):
     """Project status enumeration"""
+
     PLANNING = "Planning"
     IN_PROGRESS = "In Progress"
     ON_HOLD = "On Hold"
@@ -21,6 +27,7 @@ class ProjectStatus(Enum):
 
 class ProjectPriority(Enum):
     """Project priority enumeration"""
+
     LOW = "Low"
     MEDIUM = "Medium"
     HIGH = "High"
@@ -30,6 +37,7 @@ class ProjectPriority(Enum):
 @dataclass
 class Project:
     """Project data model"""
+
     project_id: Optional[int] = None
     project_name: str = ""
     description: str = ""
@@ -74,7 +82,9 @@ class EnhancedProjectService:
             end_date = project_data.get("end_date")
             if start_date and end_date:
                 if isinstance(start_date, str):
-                    start_date = datetime.fromisoformat(start_date.replace("Z", "+00:00"))
+                    start_date = datetime.fromisoformat(
+                        start_date.replace("Z", "+00:00")
+                    )
                 if isinstance(end_date, str):
                     end_date = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
 
@@ -154,8 +164,12 @@ class EnhancedProjectService:
 
             if result:
                 project_data = result[0]
-                project_data["completion_rate"] = self._calculate_completion_rate(project_data)
-                project_data["health_score"] = self._calculate_health_score(project_data)
+                project_data["completion_rate"] = self._calculate_completion_rate(
+                    project_data
+                )
+                project_data["health_score"] = self._calculate_health_score(
+                    project_data
+                )
                 project_data["is_overdue"] = self._is_project_overdue(project_data)
                 return project_data
 
@@ -209,7 +223,9 @@ class EnhancedProjectService:
             raise DatabaseException(f"Project retrieval failed: {str(e)}")
 
     @with_db_transaction
-    def update_project(self, project_id: int, project_data: Dict[str, Any], user_id: int) -> bool:
+    def update_project(
+        self, project_id: int, project_data: Dict[str, Any], user_id: int
+    ) -> bool:
         """Update existing project"""
         try:
             # Validate project exists
@@ -238,7 +254,9 @@ class EnhancedProjectService:
                 if field_key in project_data:
                     value = project_data[field_key]
 
-                    if field_key in ["start_date", "end_date"] and isinstance(value, str):
+                    if field_key in ["start_date", "end_date"] and isinstance(
+                        value, str
+                    ):
                         value = datetime.fromisoformat(value.replace("Z", "+00:00"))
 
                     update_fields.append(f"{db_field} = ?")
@@ -322,7 +340,9 @@ class EnhancedProjectService:
             analytics = {
                 "total_projects": len(projects),
                 "status_distribution": self._calculate_status_distribution(projects),
-                "priority_distribution": self._calculate_priority_distribution(projects),
+                "priority_distribution": self._calculate_priority_distribution(
+                    projects
+                ),
                 "budget_analysis": self._calculate_budget_analysis(projects),
                 "timeline_analysis": self._calculate_timeline_analysis(projects),
                 "completion_metrics": self._calculate_completion_metrics(projects),
@@ -334,7 +354,9 @@ class EnhancedProjectService:
             logger.error(f"Failed to get project analytics: {str(e)}")
             raise DatabaseException(f"Analytics calculation failed: {str(e)}")
 
-    def search_projects(self, search_query: str, filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    def search_projects(
+        self, search_query: str, filters: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
         """Search projects with advanced filtering"""
         try:
             base_query = """
@@ -389,7 +411,9 @@ class EnhancedProjectService:
 
             # Enhance search results
             for project in result:
-                project["relevance_score"] = self._calculate_relevance_score(project, search_query)
+                project["relevance_score"] = self._calculate_relevance_score(
+                    project, search_query
+                )
 
             # Sort by relevance
             result.sort(key=lambda x: x["relevance_score"], reverse=True)
@@ -405,7 +429,7 @@ class EnhancedProjectService:
         """Calculate project completion rate"""
         task_count = project.get("TaskCount", 0)
         completed_tasks = project.get("CompletedTasks", 0)
-        
+
         if task_count > 0:
             return round((completed_tasks / task_count) * 100, 2)
         return 0.0
@@ -441,7 +465,9 @@ class EnhancedProjectService:
 
         return datetime.now() > end_date
 
-    def _calculate_status_distribution(self, projects: List[Dict[str, Any]]) -> Dict[str, int]:
+    def _calculate_status_distribution(
+        self, projects: List[Dict[str, Any]]
+    ) -> Dict[str, int]:
         """Calculate status distribution"""
         distribution = {}
         for project in projects:
@@ -449,7 +475,9 @@ class EnhancedProjectService:
             distribution[status] = distribution.get(status, 0) + 1
         return distribution
 
-    def _calculate_priority_distribution(self, projects: List[Dict[str, Any]]) -> Dict[str, int]:
+    def _calculate_priority_distribution(
+        self, projects: List[Dict[str, Any]]
+    ) -> Dict[str, int]:
         """Calculate priority distribution"""
         distribution = {}
         for project in projects:
@@ -457,12 +485,19 @@ class EnhancedProjectService:
             distribution[priority] = distribution.get(priority, 0) + 1
         return distribution
 
-    def _calculate_budget_analysis(self, projects: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def _calculate_budget_analysis(
+        self, projects: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
         """Calculate budget analysis"""
         budgets = [p.get("Budget", 0) for p in projects if p.get("Budget")]
-        
+
         if not budgets:
-            return {"total_budget": 0, "avg_budget": 0, "max_budget": 0, "min_budget": 0}
+            return {
+                "total_budget": 0,
+                "avg_budget": 0,
+                "max_budget": 0,
+                "min_budget": 0,
+            }
 
         return {
             "total_budget": sum(budgets),
@@ -471,18 +506,23 @@ class EnhancedProjectService:
             "min_budget": min(budgets),
         }
 
-    def _calculate_timeline_analysis(self, projects: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def _calculate_timeline_analysis(
+        self, projects: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
         """Calculate timeline analysis"""
         now = datetime.now()
-        
+
         overdue_projects = len([p for p in projects if self._is_project_overdue(p)])
-        upcoming_deadlines = len([
-            p for p in projects 
-            if p.get("EndDate") and 
-            isinstance(p["EndDate"], datetime) and 
-            p["EndDate"] > now and 
-            (p["EndDate"] - now).days <= 7
-        ])
+        upcoming_deadlines = len(
+            [
+                p
+                for p in projects
+                if p.get("EndDate")
+                and isinstance(p["EndDate"], datetime)
+                and p["EndDate"] > now
+                and (p["EndDate"] - now).days <= 7
+            ]
+        )
 
         return {
             "overdue_projects": overdue_projects,
@@ -490,18 +530,28 @@ class EnhancedProjectService:
             "total_projects": len(projects),
         }
 
-    def _calculate_completion_metrics(self, projects: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def _calculate_completion_metrics(
+        self, projects: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
         """Calculate completion metrics"""
-        completed_projects = len([p for p in projects if p.get("Status") == "Completed"])
-        in_progress_projects = len([p for p in projects if p.get("Status") == "In Progress"])
-        
+        completed_projects = len(
+            [p for p in projects if p.get("Status") == "Completed"]
+        )
+        in_progress_projects = len(
+            [p for p in projects if p.get("Status") == "In Progress"]
+        )
+
         return {
             "completed_projects": completed_projects,
             "in_progress_projects": in_progress_projects,
-            "completion_percentage": (completed_projects / len(projects) * 100) if projects else 0,
+            "completion_percentage": (
+                (completed_projects / len(projects) * 100) if projects else 0
+            ),
         }
 
-    def _calculate_relevance_score(self, project: Dict[str, Any], search_query: str) -> float:
+    def _calculate_relevance_score(
+        self, project: Dict[str, Any], search_query: str
+    ) -> float:
         """Calculate relevance score for search results"""
         score = 0.0
         query_lower = search_query.lower()
@@ -547,3 +597,31 @@ class EnhancedProjectService:
                 "upcoming_deadlines": 0,
                 "total_projects": 0,
             },
+            "completion_metrics": {
+                "completed_projects": 0,
+                "in_progress_projects": 0,
+                "completion_percentage": 0,
+            },
+        }
+
+
+# Global project service instance
+_project_service = None
+
+
+def get_project_service() -> EnhancedProjectService:
+    """Get global project service instance"""
+    global _project_service
+    if _project_service is None:
+        _project_service = EnhancedProjectService()
+    return _project_service
+
+
+# Export classes and functions
+__all__ = [
+    "EnhancedProjectService",
+    "Project",
+    "ProjectStatus",
+    "ProjectPriority",
+    "get_project_service",
+]
