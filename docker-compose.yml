@@ -1,97 +1,302 @@
-# Project Manager Pro v3.0 - Docker Compose
+# docker-compose.yml
+# DENSO Project Manager Pro - Production Deployment
+# Complete stack with SQL Server, Redis, and the application
+
 version: '3.8'
 
 services:
-  # SQL Server Database
+  # =============================================================================
+  # SQL SERVER DATABASE
+  # =============================================================================
   sqlserver:
-    image: mcr.microsoft.com/mssql/server:2019-latest
-    container_name: projectmanager_db
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: denso-pm-sqlserver
+    restart: unless-stopped
     environment:
-      SA_PASSWORD: 'ProjectManager123!'
-      ACCEPT_EULA: 'Y'
-      MSSQL_PID: 'Express'
+      - ACCEPT_EULA=Y
+      - SA_PASSWORD=${SQL_SERVER_PASSWORD:-DensoProjectManager@2025}
+      - MSSQL_PID=Express
+      - MSSQL_TCP_PORT=1433
     ports:
-      - '1433:1433'
+      - '${SQL_SERVER_PORT:-1433}:1433'
     volumes:
       - sqlserver_data:/var/opt/mssql
-      - ./database:/docker-entrypoint-initdb.d
+      - sqlserver_logs:/var/opt/mssql/log
+      - ./setup.sql:/docker-entrypoint-initdb.d/setup.sql:ro
     networks:
-      - projectmanager_network
-    restart: unless-stopped
+      - denso-network
     healthcheck:
-      test: /opt/mssql-tools/bin/sqlcmd -S localhost -U SA -P "ProjectManager123!" -Q "SELECT 1"
+      test:
+        [
+          'CMD-SHELL',
+          "/opt/mssql-tools/bin/sqlcmd -S localhost -U SA -P '${SQL_SERVER_PASSWORD:-DensoProjectManager@2025}' -Q 'SELECT 1' || exit 1",
+        ]
       interval: 30s
       timeout: 10s
       retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
 
-  # Project Manager Application
-  app:
-    build: .
-    container_name: projectmanager_app
-    ports:
-      - '8501:8501'
-    environment:
-      - DB_SERVER=sqlserver
-      - DB_DATABASE=ProjectManagerDB
-      - DB_USERNAME=sa
-      - DB_PASSWORD=ProjectManager123!
-      - DB_DRIVER=ODBC Driver 17 for SQL Server
-      - DB_PORT=1433
-      - STREAMLIT_SERVER_PORT=8501
-      - STREAMLIT_SERVER_ADDRESS=0.0.0.0
-      - STREAMLIT_SERVER_HEADLESS=true
-    depends_on:
-      sqlserver:
-        condition: service_healthy
-    networks:
-      - projectmanager_network
+  # =============================================================================
+  # REDIS CACHE
+  # =============================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: denso-pm-redis
     restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-denso2025}
+    ports:
+      - '${REDIS_PORT:-6379}:6379'
+    volumes:
+      - redis_data:/data
+    networks:
+      - denso-network
     healthcheck:
-      test: curl -f http://localhost:8501/_stcore/health || exit 1
+      test: ['CMD', 'redis-cli', '--raw', 'incr', 'ping']
       interval: 30s
       timeout: 10s
       retries: 3
-    volumes:
-      - ./logs:/app/logs
-      - ./uploads:/app/uploads
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
 
-  # Redis Cache (Optional)
-  redis:
-    image: redis:7-alpine
-    container_name: projectmanager_redis
-    ports:
-      - '6379:6379'
-    networks:
-      - projectmanager_network
+  # =============================================================================
+  # DENSO PROJECT MANAGER APPLICATION
+  # =============================================================================
+  denso-pm:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+      args:
+        - APP_VERSION=2.0.0
+        - BUILD_DATE=${BUILD_DATE:-$(date -u +'%Y-%m-%dT%H:%M:%SZ')}
+        - VCS_REF=${VCS_REF:-latest}
+    image: denso-pm:2.0.0
+    container_name: denso-pm-app
     restart: unless-stopped
-    command: redis-server --appendonly yes
-    volumes:
-      - redis_data:/data
+    ports:
+      - '${APP_PORT:-8501}:8501'
+    environment:
+      # Application Environment
+      - ENVIRONMENT=production
+      - DEBUG=false
+      - LOG_LEVEL=INFO
 
-  # Nginx Reverse Proxy (Production)
+      # Database Configuration
+      - DB_SERVER=sqlserver
+      - DB_DATABASE=ProjectManagerDB
+      - DB_USERNAME=sa
+      - DB_PASSWORD=${SQL_SERVER_PASSWORD:-DensoProjectManager@2025}
+      - DB_DRIVER=ODBC Driver 18 for SQL Server
+      - DB_PORT=1433
+
+      # Redis Configuration
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-denso2025}
+      - REDIS_ENABLED=true
+
+      # Security Configuration
+      - SECRET_KEY=${SECRET_KEY:-change-this-in-production}
+      - SESSION_TIMEOUT=3600
+      - BCRYPT_ROUNDS=12
+
+      # Performance Configuration
+      - CACHE_MAX_SIZE=100
+      - ENABLE_PERFORMANCE_MONITORING=true
+
+      # Feature Flags
+      - ENABLE_NOTIFICATIONS=true
+      - ENABLE_ANALYTICS=true
+      - ENABLE_FILE_UPLOAD=true
+    volumes:
+      - app_logs:/app/logs
+      - app_data:/app/data
+      - app_uploads:/app/data/uploads
+      - app_exports:/app/data/exports
+      - app_backups:/app/data/backups
+    networks:
+      - denso-network
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:8501/_stcore/health']
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+
+  # =============================================================================
+  # NGINX REVERSE PROXY (Optional)
+  # =============================================================================
   nginx:
     image: nginx:alpine
-    container_name: projectmanager_nginx
+    container_name: denso-pm-nginx
+    restart: unless-stopped
     ports:
-      - '80:80'
-      - '443:443'
+      - '${NGINX_HTTP_PORT:-80}:80'
+      - '${NGINX_HTTPS_PORT:-443}:443'
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/ssl:/etc/nginx/ssl:ro
-    depends_on:
-      - app
+      - nginx_logs:/var/log/nginx
     networks:
-      - projectmanager_network
+      - denso-network
+    depends_on:
+      - denso-pm
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.25'
+        reservations:
+          memory: 64M
+          cpus: '0.1'
+
+  # =============================================================================
+  # MONITORING (Optional)
+  # =============================================================================
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: denso-pm-prometheus
     restart: unless-stopped
+    ports:
+      - '${PROMETHEUS_PORT:-9090}:9090'
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - denso-network
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
 
-# Networks
+  grafana:
+    image: grafana/grafana:latest
+    container_name: denso-pm-grafana
+    restart: unless-stopped
+    ports:
+      - '${GRAFANA_PORT:-3000}:3000'
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    networks:
+      - denso-network
+    depends_on:
+      - prometheus
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+
+# =============================================================================
+# NETWORKS
+# =============================================================================
 networks:
-  projectmanager_network:
+  denso-network:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
 
-# Volumes
+# =============================================================================
+# VOLUMES
+# =============================================================================
 volumes:
+  # Database volumes
   sqlserver_data:
     driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/sqlserver
+  sqlserver_logs:
+    driver: local
+
+  # Redis volume
   redis_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/redis
+
+  # Application volumes
+  app_logs:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./logs
+  app_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data
+  app_uploads:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/uploads
+  app_exports:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/exports
+  app_backups:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/backups
+
+  # Nginx volumes
+  nginx_logs:
+    driver: local
+
+  # Monitoring volumes
+  prometheus_data:
+    driver: local
+  grafana_data:
     driver: local
