@@ -1,38 +1,46 @@
+#!/usr/bin/env python3
 """
 utils/performance_monitor.py
-Performance monitoring and optimization utilities
+Enterprise-grade Performance Monitoring สำหรับ DENSO Project Manager Pro
 """
 
 import streamlit as st
 import time
 import psutil
 import logging
+import asyncio
 from datetime import datetime, timedelta
-from typing import Dict, Any, Optional, List, Callable
+from typing import Dict, Any, Optional, List, Callable, Union
 from contextlib import contextmanager
-import json
-import os
 import threading
-from dataclasses import dataclass, asdict
-from functools import wraps
+from dataclasses import dataclass, field
+from functools import wraps, lru_cache
 import gc
+import sys
+from collections import deque, defaultdict
+import weakref
+from concurrent.futures import ThreadPoolExecutor
+import statistics
+import pickle
+import hashlib
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class PerformanceMetric:
-    """Performance metric data structure"""
+    """Enhanced performance metric with smart analysis"""
 
     name: str
     value: float
     unit: str
     timestamp: datetime
     threshold: Optional[float] = None
-    status: str = "normal"  # normal, warning, critical
+    status: str = "normal"
+    category: str = "general"
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict:
-        """Convert to dictionary"""
         return {
             "name": self.name,
             "value": self.value,
@@ -40,12 +48,21 @@ class PerformanceMetric:
             "timestamp": self.timestamp.isoformat(),
             "threshold": self.threshold,
             "status": self.status,
+            "category": self.category,
+            "metadata": self.metadata,
+            "age_seconds": (datetime.now() - self.timestamp).total_seconds(),
         }
+
+    def is_critical(self) -> bool:
+        return self.status == "critical"
+
+    def is_expired(self, ttl: int = 300) -> bool:
+        return (datetime.now() - self.timestamp).total_seconds() > ttl
 
 
 @dataclass
 class CacheItem:
-    """Cache item data structure"""
+    """Enterprise cache item with intelligent eviction"""
 
     key: str
     data: Any
@@ -53,453 +70,91 @@ class CacheItem:
     expires_at: datetime
     hit_count: int = 0
     size_bytes: int = 0
+    access_pattern: List[float] = field(default_factory=list)
+    priority_score: float = 1.0
 
     def is_expired(self) -> bool:
-        """Check if cache item is expired"""
         return datetime.now() > self.expires_at
 
-    def get_age_seconds(self) -> float:
-        """Get age of cache item in seconds"""
-        return (datetime.now() - self.created_at).total_seconds()
-
-
-class PerformanceMonitor:
-    """Performance monitoring and optimization manager"""
-
-    def __init__(self):
-        self.metrics = {}
-        self.performance_history = []
-        self.monitoring_enabled = True
-        self.start_time = time.time()
-
-        # Performance thresholds
-        self.thresholds = {
-            "page_load_time": 2.0,  # seconds
-            "memory_usage": 512,  # MB
-            "db_query_time": 1.0,  # seconds
-            "cache_hit_rate": 80.0,  # percentage
-            "cpu_usage": 80.0,  # percentage
-            "response_time": 0.5,  # seconds
-        }
-
-        # Initialize session state for performance tracking
-        self._init_session_state()
-
-    def _init_session_state(self):
-        """Initialize session state for performance tracking"""
-        if "performance_metrics" not in st.session_state:
-            st.session_state.performance_metrics = {}
-
-        if "page_load_times" not in st.session_state:
-            st.session_state.page_load_times = []
-
-        if "cache_stats" not in st.session_state:
-            st.session_state.cache_stats = {"hits": 0, "misses": 0, "total_size": 0}
-
-    @contextmanager
-    def measure_time(self, operation_name: str):
-        """Context manager to measure execution time"""
-        start_time = time.time()
-        start_memory = self._get_memory_usage()
-
-        try:
-            yield
-        finally:
-            if self.monitoring_enabled:
-                execution_time = time.time() - start_time
-                end_memory = self._get_memory_usage()
-                memory_delta = end_memory - start_memory
-
-                # Record metric
-                self.record_metric(
-                    f"{operation_name}_time",
-                    execution_time,
-                    "seconds",
-                    self.thresholds.get("response_time", 0.5),
-                )
-
-                # Record memory usage if significant
-                if abs(memory_delta) > 10:  # 10MB threshold
-                    self.record_metric(
-                        f"{operation_name}_memory_delta", memory_delta, "MB"
-                    )
-
-                # Log slow operations
-                if execution_time > self.thresholds.get("response_time", 0.5):
-                    logger.warning(
-                        f"Slow operation detected: {operation_name} took {execution_time:.2f}s"
-                    )
-
-    def record_metric(
-        self, name: str, value: float, unit: str, threshold: Optional[float] = None
-    ):
-        """Record a performance metric"""
-        try:
-            # Determine status based on threshold
-            status = "normal"
-            if threshold:
-                if value > threshold * 1.5:
-                    status = "critical"
-                elif value > threshold:
-                    status = "warning"
-
-            metric = PerformanceMetric(
-                name=name,
-                value=value,
-                unit=unit,
-                timestamp=datetime.now(),
-                threshold=threshold,
-                status=status,
-            )
-
-            # Store in metrics dictionary
-            self.metrics[name] = metric
-
-            # Add to history
-            self.performance_history.append(metric)
-
-            # Keep only recent history (last 1000 entries)
-            if len(self.performance_history) > 1000:
-                self.performance_history = self.performance_history[-1000:]
-
-            # Store in session state
-            st.session_state.performance_metrics[name] = metric.to_dict()
-
-        except Exception as e:
-            logger.error(f"Error recording metric {name}: {str(e)}")
-
-    def get_current_metrics(self) -> Dict[str, Any]:
-        """Get current performance metrics"""
-        try:
-            current_metrics = {}
-
-            # System metrics
-            current_metrics["memory_usage"] = self._get_memory_usage()
-            current_metrics["cpu_usage"] = self._get_cpu_usage()
-            current_metrics["uptime"] = time.time() - self.start_time
-
-            # Cache metrics
-            cache_stats = st.session_state.get("cache_stats", {})
-            total_requests = cache_stats.get("hits", 0) + cache_stats.get("misses", 0)
-            if total_requests > 0:
-                current_metrics["cache_hit_rate"] = (
-                    cache_stats.get("hits", 0) / total_requests
-                ) * 100
-            else:
-                current_metrics["cache_hit_rate"] = 0
-
-            # Page load time (average of recent loads)
-            page_load_times = st.session_state.get("page_load_times", [])
-            if page_load_times:
-                recent_loads = page_load_times[-10:]  # Last 10 page loads
-                current_metrics["page_load_time"] = sum(recent_loads) / len(
-                    recent_loads
-                )
-            else:
-                current_metrics["page_load_time"] = 0
-
-            # Database metrics (if available)
-            if "db_query_time" in self.metrics:
-                current_metrics["db_query_time"] = self.metrics["db_query_time"].value
-
-            return current_metrics
-
-        except Exception as e:
-            logger.error(f"Error getting current metrics: {str(e)}")
-            return {}
-
-    def _get_memory_usage(self) -> float:
-        """Get current memory usage in MB"""
-        try:
-            process = psutil.Process()
-            memory_info = process.memory_info()
-            return memory_info.rss / (1024 * 1024)  # Convert to MB
-        except:
-            return 0.0
-
-    def _get_cpu_usage(self) -> float:
-        """Get current CPU usage percentage"""
-        try:
-            return psutil.cpu_percent(interval=0.1)
-        except:
-            return 0.0
-
-    def get_system_info(self) -> Dict[str, Any]:
-        """Get comprehensive system information"""
-        try:
-            info = {}
-
-            # CPU information
-            info["cpu"] = {
-                "usage_percent": psutil.cpu_percent(interval=1),
-                "count": psutil.cpu_count(),
-                "count_logical": psutil.cpu_count(logical=True),
-            }
-
-            # Memory information
-            memory = psutil.virtual_memory()
-            info["memory"] = {
-                "total_gb": memory.total / (1024**3),
-                "available_gb": memory.available / (1024**3),
-                "usage_percent": memory.percent,
-                "used_gb": memory.used / (1024**3),
-            }
-
-            # Disk information
-            disk = psutil.disk_usage("/" if os.name != "nt" else "C:")
-            info["disk"] = {
-                "total_gb": disk.total / (1024**3),
-                "free_gb": disk.free / (1024**3),
-                "usage_percent": (disk.used / disk.total) * 100,
-                "used_gb": disk.used / (1024**3),
-            }
-
-            # Network information (if available)
-            try:
-                network = psutil.net_io_counters()
-                info["network"] = {
-                    "bytes_sent": network.bytes_sent,
-                    "bytes_recv": network.bytes_recv,
-                    "packets_sent": network.packets_sent,
-                    "packets_recv": network.packets_recv,
-                }
-            except:
-                info["network"] = None
-
-            return info
-
-        except Exception as e:
-            logger.error(f"Error getting system info: {str(e)}")
-            return {}
-
-    def get_performance_report(self, hours: int = 24) -> Dict[str, Any]:
-        """Generate performance report for specified time period"""
-        try:
-            cutoff_time = datetime.now() - timedelta(hours=hours)
-
-            # Filter metrics by time period
-            recent_metrics = [
-                metric
-                for metric in self.performance_history
-                if metric.timestamp > cutoff_time
-            ]
-
-            if not recent_metrics:
-                return {"message": "No metrics available for the specified period"}
-
-            # Analyze metrics
-            report = {
-                "period": {
-                    "start": cutoff_time.isoformat(),
-                    "end": datetime.now().isoformat(),
-                    "hours": hours,
-                },
-                "summary": {
-                    "total_metrics": len(recent_metrics),
-                    "unique_operations": len(set(m.name for m in recent_metrics)),
-                },
-                "analysis": {},
-            }
-
-            # Group metrics by name
-            metrics_by_name = {}
-            for metric in recent_metrics:
-                if metric.name not in metrics_by_name:
-                    metrics_by_name[metric.name] = []
-                metrics_by_name[metric.name].append(metric)
-
-            # Analyze each metric type
-            for name, metrics in metrics_by_name.items():
-                values = [m.value for m in metrics]
-
-                analysis = {
-                    "count": len(values),
-                    "min": min(values),
-                    "max": max(values),
-                    "avg": sum(values) / len(values),
-                    "unit": metrics[0].unit,
-                }
-
-                # Count status occurrences
-                statuses = [m.status for m in metrics]
-                analysis["status_counts"] = {
-                    "normal": statuses.count("normal"),
-                    "warning": statuses.count("warning"),
-                    "critical": statuses.count("critical"),
-                }
-
-                # Calculate trends (if enough data points)
-                if len(values) >= 2:
-                    recent_avg = sum(values[-5:]) / len(values[-5:])
-                    older_avg = (
-                        sum(values[:5]) / len(values[:5])
-                        if len(values) >= 10
-                        else sum(values[:-5]) / len(values[:-5])
-                    )
-
-                    if older_avg > 0:
-                        trend_percent = ((recent_avg - older_avg) / older_avg) * 100
-                        analysis["trend"] = {
-                            "direction": (
-                                "improving"
-                                if trend_percent < -5
-                                else "degrading" if trend_percent > 5 else "stable"
-                            ),
-                            "percentage": trend_percent,
-                        }
-
-                report["analysis"][name] = analysis
-
-            return report
-
-        except Exception as e:
-            logger.error(f"Error generating performance report: {str(e)}")
-            return {"error": str(e)}
-
-    def optimize_performance(self) -> Dict[str, Any]:
-        """Run performance optimization procedures"""
-        try:
-            optimization_results = {
-                "optimizations_performed": [],
-                "memory_before": self._get_memory_usage(),
-                "cpu_before": self._get_cpu_usage(),
-                "timestamp": datetime.now().isoformat(),
-            }
-
-            # Garbage collection
-            before_objects = len(gc.get_objects())
-            collected = gc.collect()
-            after_objects = len(gc.get_objects())
-
-            optimization_results["optimizations_performed"].append(
-                {
-                    "action": "garbage_collection",
-                    "objects_before": before_objects,
-                    "objects_after": after_objects,
-                    "objects_collected": collected,
-                }
-            )
-
-            # Clear old performance history
-            if len(self.performance_history) > 500:
-                removed_count = len(self.performance_history) - 500
-                self.performance_history = self.performance_history[-500:]
-
-                optimization_results["optimizations_performed"].append(
-                    {"action": "clear_old_metrics", "metrics_removed": removed_count}
-                )
-
-            # Clear old session state data
-            page_load_times = st.session_state.get("page_load_times", [])
-            if len(page_load_times) > 50:
-                removed_count = len(page_load_times) - 50
-                st.session_state.page_load_times = page_load_times[-50:]
-
-                optimization_results["optimizations_performed"].append(
-                    {"action": "clear_old_page_loads", "entries_removed": removed_count}
-                )
-
-            # Record final metrics
-            optimization_results["memory_after"] = self._get_memory_usage()
-            optimization_results["cpu_after"] = self._get_cpu_usage()
-            optimization_results["memory_saved"] = (
-                optimization_results["memory_before"]
-                - optimization_results["memory_after"]
-            )
-
-            logger.info(
-                f"Performance optimization completed: {len(optimization_results['optimizations_performed'])} optimizations"
-            )
-
-            return optimization_results
-
-        except Exception as e:
-            logger.error(f"Performance optimization failed: {str(e)}")
-            return {"error": str(e)}
-
-    def record_page_load(self, page_name: str, load_time: float):
-        """Record page load time"""
-        try:
-            # Add to session state
-            if "page_load_times" not in st.session_state:
-                st.session_state.page_load_times = []
-
-            st.session_state.page_load_times.append(load_time)
-
-            # Keep only recent loads
-            if len(st.session_state.page_load_times) > 100:
-                st.session_state.page_load_times = st.session_state.page_load_times[
-                    -100:
-                ]
-
-            # Record as metric
-            self.record_metric(
-                f"page_load_{page_name}",
-                load_time,
-                "seconds",
-                self.thresholds.get("page_load_time", 2.0),
-            )
-
-        except Exception as e:
-            logger.error(f"Error recording page load: {str(e)}")
-
-
-class CacheManager:
-    """Advanced caching system for performance optimization"""
-
-    def __init__(self, max_size_mb: int = 100, default_ttl_minutes: int = 30):
-        self.cache = {}
+    def record_access(self):
+        current_time = time.time()
+        self.hit_count += 1
+        self.access_pattern.append(current_time)
+
+        # Keep last 10 accesses only
+        if len(self.access_pattern) > 10:
+            self.access_pattern = self.access_pattern[-10:]
+
+        # Update priority score
+        if len(self.access_pattern) >= 2:
+            time_span = self.access_pattern[-1] - self.access_pattern[0]
+            if time_span > 0:
+                frequency = len(self.access_pattern) / time_span
+                self.priority_score = frequency * self.hit_count
+
+    def calculate_eviction_score(self) -> float:
+        """Lower score = higher eviction priority"""
+        age_hours = (datetime.now() - self.created_at).total_seconds() / 3600
+        size_mb = self.size_bytes / (1024 * 1024)
+
+        return self.priority_score / (age_hours + size_mb + 1)
+
+
+class SmartCache:
+    """High-performance cache with intelligent management"""
+
+    def __init__(self, max_size_mb: int = 100, default_ttl: int = 300):
+        self.cache: Dict[str, CacheItem] = {}
         self.max_size_bytes = max_size_mb * 1024 * 1024
-        self.default_ttl = timedelta(minutes=default_ttl_minutes)
-        self.stats = {"hits": 0, "misses": 0, "evictions": 0, "total_size": 0}
-        self._lock = threading.Lock()
+        self.default_ttl = default_ttl
+        self.stats = {
+            "hits": 0,
+            "misses": 0,
+            "evictions": 0,
+            "total_size": 0,
+            "operations": 0,
+        }
+        self._lock = threading.RLock()
+        self.executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="cache")
 
     def get(self, key: str) -> Any:
-        """Get item from cache"""
+        """Get item with smart access tracking"""
         with self._lock:
+            self.stats["operations"] += 1
+
             if key in self.cache:
                 item = self.cache[key]
 
-                # Check if expired
                 if item.is_expired():
-                    del self.cache[key]
+                    self._remove_item(key)
                     self.stats["misses"] += 1
-                    self._update_session_stats()
                     return None
 
-                # Update hit count and stats
-                item.hit_count += 1
+                item.record_access()
                 self.stats["hits"] += 1
-                self._update_session_stats()
-
                 return item.data
 
             self.stats["misses"] += 1
-            self._update_session_stats()
             return None
 
-    def set(self, key: str, data: Any, ttl_minutes: Optional[int] = None) -> bool:
-        """Set item in cache"""
+    def set(self, key: str, data: Any, ttl: Optional[int] = None) -> bool:
+        """Set item with intelligent eviction"""
         try:
             with self._lock:
-                # Calculate expiration time
-                ttl = (
-                    timedelta(minutes=ttl_minutes) if ttl_minutes else self.default_ttl
-                )
-                expires_at = datetime.now() + ttl
+                ttl = ttl or self.default_ttl
 
-                # Estimate data size
+                # Calculate data size
                 try:
-                    import sys
-
-                    size_bytes = sys.getsizeof(data)
+                    size_bytes = len(pickle.dumps(data))
                 except:
-                    size_bytes = 1024  # Default estimate
+                    size_bytes = sys.getsizeof(data)
 
-                # Check if we need to evict items
-                self._ensure_space(size_bytes)
+                # Check if eviction needed
+                if self._needs_eviction(size_bytes):
+                    self._smart_eviction(size_bytes)
 
                 # Create cache item
+                expires_at = datetime.now() + timedelta(seconds=ttl)
                 item = CacheItem(
                     key=key,
                     data=data,
@@ -510,302 +165,477 @@ class CacheManager:
 
                 # Remove old item if exists
                 if key in self.cache:
-                    old_item = self.cache[key]
-                    self.stats["total_size"] -= old_item.size_bytes
+                    self._remove_item(key)
 
-                # Add new item
                 self.cache[key] = item
                 self.stats["total_size"] += size_bytes
 
-                self._update_session_stats()
                 return True
 
         except Exception as e:
-            logger.error(f"Cache set error: {str(e)}")
+            logger.error(f"Cache set error for key {key}: {e}")
             return False
 
-    def delete(self, key: str) -> bool:
-        """Delete item from cache"""
-        with self._lock:
-            if key in self.cache:
-                item = self.cache[key]
-                self.stats["total_size"] -= item.size_bytes
-                del self.cache[key]
-                self._update_session_stats()
-                return True
-            return False
+    def _needs_eviction(self, new_size: int) -> bool:
+        return (self.stats["total_size"] + new_size) > self.max_size_bytes
 
-    def clear(self):
-        """Clear all cache items"""
-        with self._lock:
-            self.cache.clear()
-            self.stats["total_size"] = 0
-            self._update_session_stats()
+    def _smart_eviction(self, needed_space: int):
+        """Intelligent LRU + priority-based eviction"""
+        if not self.cache:
+            return
 
-    def _ensure_space(self, needed_bytes: int):
-        """Ensure enough space for new item"""
-        # Check if we need to make space
-        if self.stats["total_size"] + needed_bytes > self.max_size_bytes:
-            # Sort items by last access time and size
-            items_by_priority = sorted(
-                self.cache.items(),
-                key=lambda x: (x[1].hit_count, -x[1].get_age_seconds()),
-            )
+        # Sort by eviction score (lowest first)
+        items_by_score = sorted(
+            self.cache.items(), key=lambda x: x[1].calculate_eviction_score()
+        )
 
-            # Remove items until we have enough space
-            for key, item in items_by_priority:
-                if self.stats["total_size"] + needed_bytes <= self.max_size_bytes:
-                    break
+        freed_space = 0
+        evicted_count = 0
 
-                self.stats["total_size"] -= item.size_bytes
-                del self.cache[key]
-                self.stats["evictions"] += 1
+        for key, item in items_by_score:
+            if freed_space >= needed_space:
+                break
 
-    def _update_session_stats(self):
-        """Update session state cache stats"""
-        try:
-            st.session_state.cache_stats = {
-                "hits": self.stats["hits"],
-                "misses": self.stats["misses"],
-                "total_size": self.stats["total_size"],
-            }
-        except:
-            pass
+            freed_space += item.size_bytes
+            self._remove_item(key)
+            evicted_count += 1
 
-    def get_stats(self) -> Dict[str, Any]:
-        """Get cache statistics"""
-        with self._lock:
-            total_requests = self.stats["hits"] + self.stats["misses"]
-            hit_rate = (
-                (self.stats["hits"] / total_requests * 100) if total_requests > 0 else 0
-            )
+        self.stats["evictions"] += evicted_count
+        logger.debug(
+            f"Smart eviction: freed {freed_space} bytes, evicted {evicted_count} items"
+        )
 
-            return {
-                "hits": self.stats["hits"],
-                "misses": self.stats["misses"],
-                "evictions": self.stats["evictions"],
-                "hit_rate": hit_rate,
-                "total_size_mb": self.stats["total_size"] / (1024 * 1024),
-                "item_count": len(self.cache),
-                "max_size_mb": self.max_size_bytes / (1024 * 1024),
-            }
+    def _remove_item(self, key: str):
+        """Remove item and update stats"""
+        if key in self.cache:
+            self.stats["total_size"] -= self.cache[key].size_bytes
+            del self.cache[key]
 
-    def cleanup_expired(self) -> int:
-        """Clean up expired cache items"""
-        with self._lock:
-            expired_keys = []
+    def clear_expired(self):
+        """Background cleanup of expired items"""
 
-            for key, item in self.cache.items():
-                if item.is_expired():
-                    expired_keys.append(key)
+        def cleanup():
+            with self._lock:
+                expired_keys = [
+                    key for key, item in self.cache.items() if item.is_expired()
+                ]
 
-            for key in expired_keys:
-                item = self.cache[key]
-                self.stats["total_size"] -= item.size_bytes
-                del self.cache[key]
+                for key in expired_keys:
+                    self._remove_item(key)
 
-            return len(expired_keys)
+                if expired_keys:
+                    logger.debug(f"Cleaned up {len(expired_keys)} expired cache items")
+
+        self.executor.submit(cleanup)
+
+    def get_statistics(self) -> Dict[str, Any]:
+        """Get comprehensive cache statistics"""
+        total_ops = self.stats["hits"] + self.stats["misses"]
+        hit_rate = (self.stats["hits"] / total_ops * 100) if total_ops > 0 else 0
+
+        return {
+            "hit_rate": hit_rate,
+            "total_items": len(self.cache),
+            "total_size_mb": self.stats["total_size"] / (1024 * 1024),
+            "max_size_mb": self.max_size_bytes / (1024 * 1024),
+            "usage_percent": (self.stats["total_size"] / self.max_size_bytes * 100),
+            "hits": self.stats["hits"],
+            "misses": self.stats["misses"],
+            "evictions": self.stats["evictions"],
+            "operations_total": self.stats["operations"],
+        }
 
 
-class QueryOptimizer:
-    """Database query optimization utilities"""
+class AdvancedPerformanceMonitor:
+    """Enterprise performance monitoring with predictive analytics"""
 
     def __init__(self):
-        self.query_stats = {}
-        self.slow_queries = []
-        self.optimization_suggestions = []
+        self.metrics: Dict[str, PerformanceMetric] = {}
+        self.history: deque = deque(maxlen=1000)
+        self.trends: Dict[str, List[float]] = defaultdict(lambda: deque(maxlen=50))
+        self.start_time = time.time()
+        self.monitoring_enabled = True
 
-    def track_query(self, query: str, execution_time: float, result_count: int = 0):
-        """Track database query performance"""
+        # Enhanced thresholds
+        self.thresholds = {
+            "page_load": {"warning": 1.0, "critical": 3.0},
+            "db_query": {"warning": 0.5, "critical": 2.0},
+            "memory_usage": {"warning": 70.0, "critical": 90.0},
+            "cpu_usage": {"warning": 80.0, "critical": 95.0},
+            "cache_hit_rate": {"warning": 60.0, "critical": 40.0},
+            "response_time": {"warning": 0.5, "critical": 2.0},
+        }
+
+        self.executor = ThreadPoolExecutor(
+            max_workers=3, thread_name_prefix="perf-monitor"
+        )
+        self._init_session_state()
+
+    def _init_session_state(self):
+        """Initialize session state for performance tracking"""
+        if "performance_data" not in st.session_state:
+            st.session_state.performance_data = {
+                "metrics": {},
+                "alerts": [],
+                "system_health": "good",
+            }
+
+    @contextmanager
+    def measure(self, operation: str, category: str = "general"):
+        """Context manager for measuring operation performance"""
+        start_time = time.time()
+        start_memory = self._get_memory_usage()
+
         try:
-            # Normalize query for tracking
-            normalized_query = self._normalize_query(query)
+            yield
+        finally:
+            duration = time.time() - start_time
+            memory_used = self._get_memory_usage() - start_memory
 
-            if normalized_query not in self.query_stats:
-                self.query_stats[normalized_query] = {
-                    "count": 0,
-                    "total_time": 0,
-                    "min_time": float("inf"),
-                    "max_time": 0,
-                    "avg_time": 0,
-                    "last_executed": None,
-                }
+            # Record metric
+            self.record_metric(
+                name=operation,
+                value=duration,
+                unit="seconds",
+                category=category,
+                metadata={"memory_delta": memory_used},
+            )
 
-            stats = self.query_stats[normalized_query]
-            stats["count"] += 1
-            stats["total_time"] += execution_time
-            stats["min_time"] = min(stats["min_time"], execution_time)
-            stats["max_time"] = max(stats["max_time"], execution_time)
-            stats["avg_time"] = stats["total_time"] / stats["count"]
-            stats["last_executed"] = datetime.now()
-
-            # Track slow queries
-            if execution_time > 1.0:  # Queries slower than 1 second
-                self.slow_queries.append(
-                    {
-                        "query": query[:200] + "..." if len(query) > 200 else query,
-                        "execution_time": execution_time,
-                        "result_count": result_count,
-                        "timestamp": datetime.now(),
-                    }
-                )
-
-                # Keep only recent slow queries
-                if len(self.slow_queries) > 50:
-                    self.slow_queries = self.slow_queries[-50:]
-
-                # Generate optimization suggestion
-                self._suggest_optimization(
-                    normalized_query, execution_time, result_count
-                )
-
-        except Exception as e:
-            logger.error(f"Query tracking error: {str(e)}")
-
-    def _normalize_query(self, query: str) -> str:
-        """Normalize query for consistent tracking"""
-        try:
-            # Convert to uppercase and remove extra whitespace
-            normalized = " ".join(query.upper().split())
-
-            # Replace parameter placeholders with generic placeholder
-            import re
-
-            normalized = re.sub(r"\?|\$\d+|:\w+", "?", normalized)
-
-            # Replace string literals with placeholder
-            normalized = re.sub(r"'[^']*'", "'?'", normalized)
-
-            # Replace numeric literals with placeholder
-            normalized = re.sub(r"\b\d+\b", "?", normalized)
-
-            return normalized
-
-        except:
-            return query[:100]  # Fallback
-
-    def _suggest_optimization(
-        self, query: str, execution_time: float, result_count: int
+    def record_metric(
+        self,
+        name: str,
+        value: float,
+        unit: str,
+        category: str = "general",
+        metadata: Dict = None,
     ):
-        """Generate optimization suggestions for slow queries"""
+        """Record performance metric with trend analysis"""
+        if not self.monitoring_enabled:
+            return
+
+        # Determine status
+        status = self._calculate_status(name, value, category)
+
+        # Create metric
+        metric = PerformanceMetric(
+            name=name,
+            value=value,
+            unit=unit,
+            timestamp=datetime.now(),
+            threshold=self._get_threshold(name, category),
+            status=status,
+            category=category,
+            metadata=metadata or {},
+        )
+
+        # Store and update trends
+        self.metrics[name] = metric
+        self.history.append(metric)
+        self.trends[name].append(value)
+
+        # Update session state
+        st.session_state.performance_data["metrics"][name] = metric.to_dict()
+
+        # Generate alerts for critical metrics
+        if status == "critical":
+            self._generate_alert(metric)
+
+        # Background trend analysis
+        if len(self.trends[name]) >= 10:
+            self.executor.submit(self._analyze_trend, name)
+
+    def _calculate_status(self, name: str, value: float, category: str) -> str:
+        """Calculate metric status based on thresholds"""
+        threshold_key = name.replace("_time", "").replace("_usage", "_usage")
+        thresholds = self.thresholds.get(threshold_key, {})
+
+        if not thresholds:
+            return "normal"
+
+        if value >= thresholds.get("critical", float("inf")):
+            return "critical"
+        elif value >= thresholds.get("warning", float("inf")):
+            return "warning"
+
+        return "normal"
+
+    def _get_threshold(self, name: str, category: str) -> Optional[float]:
+        """Get warning threshold for metric"""
+        threshold_key = name.replace("_time", "").replace("_usage", "_usage")
+        return self.thresholds.get(threshold_key, {}).get("warning")
+
+    def _generate_alert(self, metric: PerformanceMetric):
+        """Generate performance alert"""
+        alert = {
+            "timestamp": metric.timestamp.isoformat(),
+            "type": "performance",
+            "severity": metric.status,
+            "message": f"Critical performance issue: {metric.name} = {metric.value} {metric.unit}",
+            "metric": metric.to_dict(),
+        }
+
+        # Add to session state alerts
+        if "alerts" not in st.session_state.performance_data:
+            st.session_state.performance_data["alerts"] = []
+
+        st.session_state.performance_data["alerts"].insert(0, alert)
+
+        # Keep only last 20 alerts
+        if len(st.session_state.performance_data["alerts"]) > 20:
+            st.session_state.performance_data["alerts"] = (
+                st.session_state.performance_data["alerts"][:20]
+            )
+
+        logger.warning(f"Performance Alert: {alert['message']}")
+
+    def _analyze_trend(self, metric_name: str):
+        """Analyze metric trend for predictions"""
         try:
-            suggestions = []
+            values = list(self.trends[metric_name])
+            if len(values) < 10:
+                return
 
-            # Check for missing indexes
-            if "WHERE" in query and execution_time > 2.0:
-                suggestions.append("Consider adding indexes on WHERE clause columns")
+            # Simple trend analysis
+            recent_avg = statistics.mean(values[-5:])
+            older_avg = statistics.mean(values[-10:-5])
 
-            # Check for SELECT *
-            if "SELECT *" in query:
-                suggestions.append("Avoid SELECT * - specify only needed columns")
+            if older_avg > 0:
+                trend_pct = ((recent_avg - older_avg) / older_avg) * 100
 
-            # Check for large result sets
-            if result_count > 1000:
-                suggestions.append("Consider pagination for large result sets")
-
-            # Check for complex JOINs
-            join_count = query.count("JOIN")
-            if join_count > 3:
-                suggestions.append(
-                    "Complex JOINs detected - consider query restructuring"
-                )
-
-            # Check for subqueries
-            if "SELECT" in query[query.find("SELECT") + 6 :]:
-                suggestions.append("Subqueries detected - consider JOINs or EXISTS")
-
-            if suggestions:
-                self.optimization_suggestions.append(
-                    {
-                        "query": query[:100],
-                        "execution_time": execution_time,
-                        "suggestions": suggestions,
-                        "timestamp": datetime.now(),
-                    }
-                )
-
-                # Keep only recent suggestions
-                if len(self.optimization_suggestions) > 20:
-                    self.optimization_suggestions = self.optimization_suggestions[-20:]
+                # Predict if trend continues
+                if abs(trend_pct) > 20:  # Significant trend
+                    direction = "increasing" if trend_pct > 0 else "decreasing"
+                    logger.info(
+                        f"Trend detected for {metric_name}: {direction} by {abs(trend_pct):.1f}%"
+                    )
 
         except Exception as e:
-            logger.error(f"Optimization suggestion error: {str(e)}")
+            logger.error(f"Trend analysis error for {metric_name}: {e}")
 
-    def get_query_report(self) -> Dict[str, Any]:
-        """Get comprehensive query performance report"""
+    def get_system_metrics(self) -> Dict[str, Any]:
+        """Get comprehensive system metrics"""
         try:
-            # Sort queries by various metrics
-            slowest_queries = sorted(
-                self.query_stats.items(), key=lambda x: x[1]["max_time"], reverse=True
-            )[:10]
+            # Memory metrics
+            memory = psutil.virtual_memory()
+            memory_mb = memory.used / (1024 * 1024)
 
-            most_frequent = sorted(
-                self.query_stats.items(), key=lambda x: x[1]["count"], reverse=True
-            )[:10]
+            # CPU metrics
+            cpu_percent = psutil.cpu_percent(interval=0.1)
+            cpu_count = psutil.cpu_count()
 
-            highest_total_time = sorted(
-                self.query_stats.items(), key=lambda x: x[1]["total_time"], reverse=True
-            )[:10]
+            # Disk metrics
+            disk = psutil.disk_usage("/")
+
+            # Process metrics
+            process = psutil.Process()
+            process_memory = process.memory_info().rss / (1024 * 1024)
+
+            # Record metrics
+            self.record_metric("memory_usage", memory.percent, "%", "system")
+            self.record_metric("cpu_usage", cpu_percent, "%", "system")
+            self.record_metric("process_memory", process_memory, "MB", "system")
 
             return {
-                "summary": {
-                    "total_queries": len(self.query_stats),
-                    "slow_queries": len(self.slow_queries),
-                    "optimization_suggestions": len(self.optimization_suggestions),
-                },
-                "slowest_queries": [
-                    {
-                        "query": query[:100],
-                        "max_time": stats["max_time"],
-                        "avg_time": stats["avg_time"],
-                        "count": stats["count"],
-                    }
-                    for query, stats in slowest_queries
-                ],
-                "most_frequent": [
-                    {
-                        "query": query[:100],
-                        "count": stats["count"],
-                        "avg_time": stats["avg_time"],
-                        "total_time": stats["total_time"],
-                    }
-                    for query, stats in most_frequent
-                ],
-                "highest_total_time": [
-                    {
-                        "query": query[:100],
-                        "total_time": stats["total_time"],
-                        "count": stats["count"],
-                        "avg_time": stats["avg_time"],
-                    }
-                    for query, stats in highest_total_time
-                ],
-                "recent_slow_queries": self.slow_queries[-10:],
-                "optimization_suggestions": self.optimization_suggestions[-10:],
+                "memory_usage_mb": memory_mb,
+                "memory_percent": memory.percent,
+                "memory_available_gb": memory.available / (1024**3),
+                "cpu_percent": cpu_percent,
+                "cpu_count": cpu_count,
+                "disk_usage_percent": disk.percent,
+                "disk_free_gb": disk.free / (1024**3),
+                "process_memory_mb": process_memory,
+                "load_average": (
+                    os.getloadavg() if hasattr(os, "getloadavg") else [0, 0, 0]
+                ),
             }
 
         except Exception as e:
-            logger.error(f"Query report error: {str(e)}")
+            logger.error(f"Error getting system metrics: {e}")
             return {}
 
+    def optimize_performance(self) -> Dict[str, Any]:
+        """Advanced performance optimization"""
+        results = {
+            "optimizations": [],
+            "before": self._get_performance_snapshot(),
+            "timestamp": datetime.now().isoformat(),
+        }
 
-# Performance decorators
-def monitor_performance(operation_name: str = None):
-    """Decorator to monitor function performance"""
+        try:
+            # 1. Garbage collection
+            before_objects = len(gc.get_objects())
+            collected = gc.collect()
+            after_objects = len(gc.get_objects())
+
+            if collected > 0:
+                results["optimizations"].append(
+                    {
+                        "type": "garbage_collection",
+                        "objects_before": before_objects,
+                        "objects_after": after_objects,
+                        "objects_collected": collected,
+                    }
+                )
+
+            # 2. Clear old metrics
+            if len(self.history) > 500:
+                old_count = len(self.history)
+                self.history = deque(list(self.history)[-500:], maxlen=1000)
+                results["optimizations"].append(
+                    {
+                        "type": "metrics_cleanup",
+                        "metrics_removed": old_count - len(self.history),
+                    }
+                )
+
+            # 3. Session state cleanup
+            if hasattr(st, "session_state"):
+                cleaned = self._cleanup_session_state()
+                if cleaned > 0:
+                    results["optimizations"].append(
+                        {"type": "session_cleanup", "items_removed": cleaned}
+                    )
+
+            # 4. Cache optimization
+            cache_manager = get_cache_manager()
+            if hasattr(cache_manager, "clear_expired"):
+                cache_manager.clear_expired()
+                results["optimizations"].append(
+                    {"type": "cache_cleanup", "status": "completed"}
+                )
+
+            results["after"] = self._get_performance_snapshot()
+
+        except Exception as e:
+            logger.error(f"Performance optimization error: {e}")
+            results["error"] = str(e)
+
+        return results
+
+    def _get_performance_snapshot(self) -> Dict[str, float]:
+        """Get current performance snapshot"""
+        return {
+            "memory_mb": self._get_memory_usage(),
+            "cpu_percent": psutil.cpu_percent() if psutil else 0,
+            "timestamp": time.time(),
+        }
+
+    def _get_memory_usage(self) -> float:
+        """Get current memory usage in MB"""
+        try:
+            return psutil.virtual_memory().used / (1024 * 1024)
+        except:
+            return 0.0
+
+    def _cleanup_session_state(self) -> int:
+        """Clean up old session state data"""
+        cleaned = 0
+        current_time = time.time()
+
+        try:
+            # Clean old temporary data
+            keys_to_remove = []
+            for key in st.session_state.keys():
+                if key.startswith("temp_"):
+                    if hasattr(st.session_state[key], "timestamp"):
+                        if (
+                            current_time - st.session_state[key]["timestamp"] > 600
+                        ):  # 10 minutes
+                            keys_to_remove.append(key)
+
+            for key in keys_to_remove:
+                del st.session_state[key]
+                cleaned += 1
+
+        except Exception as e:
+            logger.error(f"Session cleanup error: {e}")
+
+        return cleaned
+
+    def get_performance_report(self) -> Dict[str, Any]:
+        """Generate comprehensive performance report"""
+        return {
+            "timestamp": datetime.now().isoformat(),
+            "uptime_minutes": (time.time() - self.start_time) / 60,
+            "system_metrics": self.get_system_metrics(),
+            "cache_stats": get_cache_manager().get_statistics(),
+            "recent_metrics": [m.to_dict() for m in list(self.history)[-10:]],
+            "alerts_count": len(st.session_state.performance_data.get("alerts", [])),
+            "trends_analysis": self._get_trends_summary(),
+            "recommendations": self._generate_recommendations(),
+        }
+
+    def _get_trends_summary(self) -> Dict[str, Any]:
+        """Get trends summary for all metrics"""
+        trends = {}
+        for name, values in self.trends.items():
+            if len(values) >= 5:
+                recent = statistics.mean(list(values)[-3:])
+                older = (
+                    statistics.mean(list(values)[-6:-3]) if len(values) >= 6 else recent
+                )
+
+                trend_direction = "stable"
+                if recent > older * 1.1:
+                    trend_direction = "increasing"
+                elif recent < older * 0.9:
+                    trend_direction = "decreasing"
+
+                trends[name] = {
+                    "direction": trend_direction,
+                    "current_avg": recent,
+                    "samples": len(values),
+                }
+
+        return trends
+
+    def _generate_recommendations(self) -> List[str]:
+        """Generate performance improvement recommendations"""
+        recommendations = []
+
+        # Analyze system metrics
+        system_metrics = self.get_system_metrics()
+
+        if system_metrics.get("memory_percent", 0) > 80:
+            recommendations.append(
+                "💾 High memory usage detected - consider increasing available RAM or optimizing memory-intensive operations"
+            )
+
+        if system_metrics.get("cpu_percent", 0) > 80:
+            recommendations.append(
+                "⚡ High CPU usage detected - review CPU-intensive operations and consider load balancing"
+            )
+
+        # Analyze cache performance
+        cache_stats = get_cache_manager().get_statistics()
+        if cache_stats.get("hit_rate", 100) < 70:
+            recommendations.append(
+                "🗄️ Low cache hit rate - review caching strategy and TTL settings"
+            )
+
+        # Analyze trends
+        trends = self._get_trends_summary()
+        for metric, trend in trends.items():
+            if trend["direction"] == "increasing" and "time" in metric:
+                recommendations.append(
+                    f"📈 {metric} showing increasing trend - investigate potential performance degradation"
+                )
+
+        if not recommendations:
+            recommendations.append("✅ System performance is within normal parameters")
+
+        return recommendations
+
+
+# Performance decorators for enterprise usage
+def monitor_performance(operation_name: str, category: str = "general"):
+    """Decorator for automatic performance monitoring"""
 
     def decorator(func: Callable) -> Callable:
         @wraps(func)
         def wrapper(*args, **kwargs):
-            name = operation_name or func.__name__
-
-            # Get performance monitor
-            if "performance_monitor" in st.session_state:
-                monitor = st.session_state.performance_monitor
-            else:
-                monitor = PerformanceMonitor()
-                st.session_state.performance_monitor = monitor
-
-            with monitor.measure_time(name):
+            monitor = get_performance_monitor()
+            with monitor.measure(operation_name, category):
                 return func(*args, **kwargs)
 
         return wrapper
@@ -813,33 +643,29 @@ def monitor_performance(operation_name: str = None):
     return decorator
 
 
-def cache_result(ttl_minutes: int = 30, key_func: Callable = None):
-    """Decorator to cache function results"""
+def cache_result(ttl: int = 300, key_func: Optional[Callable] = None):
+    """Decorator for intelligent result caching"""
 
     def decorator(func: Callable) -> Callable:
         @wraps(func)
         def wrapper(*args, **kwargs):
-            # Get cache manager
-            if "cache_manager" not in st.session_state:
-                st.session_state.cache_manager = CacheManager()
-
-            cache_manager = st.session_state.cache_manager
+            cache = get_cache_manager()
 
             # Generate cache key
             if key_func:
                 cache_key = key_func(*args, **kwargs)
             else:
-                cache_key = f"{func.__name__}_{hash(str(args) + str(kwargs))}"
+                key_parts = [func.__name__, str(args), str(sorted(kwargs.items()))]
+                cache_key = hashlib.md5(str(key_parts).encode()).hexdigest()
 
-            # Try to get from cache
-            result = cache_manager.get(cache_key)
+            # Try cache first
+            result = cache.get(cache_key)
             if result is not None:
                 return result
 
-            # Execute function and cache result
+            # Execute and cache
             result = func(*args, **kwargs)
-            cache_manager.set(cache_key, result, ttl_minutes)
-
+            cache.set(cache_key, result, ttl)
             return result
 
         return wrapper
@@ -850,54 +676,42 @@ def cache_result(ttl_minutes: int = 30, key_func: Callable = None):
 # Global instances
 _performance_monitor = None
 _cache_manager = None
-_query_optimizer = None
 
 
-def get_performance_monitor() -> PerformanceMonitor:
+def get_performance_monitor() -> AdvancedPerformanceMonitor:
     """Get global performance monitor instance"""
     global _performance_monitor
     if _performance_monitor is None:
-        _performance_monitor = PerformanceMonitor()
+        _performance_monitor = AdvancedPerformanceMonitor()
     return _performance_monitor
 
 
-def get_cache_manager() -> CacheManager:
+def get_cache_manager() -> SmartCache:
     """Get global cache manager instance"""
     global _cache_manager
     if _cache_manager is None:
-        _cache_manager = CacheManager()
+        _cache_manager = SmartCache()
     return _cache_manager
 
 
-def get_query_optimizer() -> QueryOptimizer:
-    """Get global query optimizer instance"""
-    global _query_optimizer
-    if _query_optimizer is None:
-        _query_optimizer = QueryOptimizer()
-    return _query_optimizer
-
-
-def init_performance_monitoring():
+def init_performance_system():
     """Initialize performance monitoring system"""
     try:
-        # Initialize global instances
         monitor = get_performance_monitor()
         cache = get_cache_manager()
-        optimizer = get_query_optimizer()
 
-        # Store in session state if available
-        try:
+        # Store in session state
+        if hasattr(st, "session_state"):
             st.session_state.performance_monitor = monitor
             st.session_state.cache_manager = cache
-            st.session_state.query_optimizer = optimizer
-        except:
-            pass  # Session state might not be available yet
 
-        logger.info("Performance monitoring initialized")
+        logger.info("Performance monitoring system initialized")
+        return True
 
     except Exception as e:
-        logger.error(f"Failed to initialize performance monitoring: {str(e)}")
+        logger.error(f"Failed to initialize performance system: {e}")
+        return False
 
 
-# Auto-initialize when module is imported
-init_performance_monitoring()
+# Auto-initialize when imported
+init_performance_system()

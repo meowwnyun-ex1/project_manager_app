@@ -1,776 +1,551 @@
+#!/usr/bin/env python3
 """
 modules/auth.py
-Authentication and authorization management
+Complete Authentication System for DENSO Project Manager Pro
 """
-
-import bcrypt
-import streamlit as st
 import logging
+import hashlib
+import streamlit as st
+from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any
-import re
-import secrets
 from dataclasses import dataclass
-from enum import Enum
+
+try:
+    import bcrypt
+
+    BCRYPT_AVAILABLE = True
+except ImportError:
+    BCRYPT_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
 
-class UserRole(Enum):
-    """User roles enumeration"""
-
-    ADMIN = "Admin"
-    PROJECT_MANAGER = "Project Manager"
-    TEAM_LEAD = "Team Lead"
-    DEVELOPER = "Developer"
-    USER = "User"
-    VIEWER = "Viewer"
-
-
-class Permission(Enum):
-    """Permission enumeration"""
-
-    # User management
-    CREATE_USER = "create_user"
-    READ_USER = "read_user"
-    UPDATE_USER = "update_user"
-    DELETE_USER = "delete_user"
-
-    # Project management
-    CREATE_PROJECT = "create_project"
-    READ_PROJECT = "read_project"
-    UPDATE_PROJECT = "update_project"
-    DELETE_PROJECT = "delete_project"
-
-    # Task management
-    CREATE_TASK = "create_task"
-    READ_TASK = "read_task"
-    UPDATE_TASK = "update_task"
-    DELETE_TASK = "delete_task"
-
-    # System administration
-    MANAGE_SETTINGS = "manage_settings"
-    VIEW_ANALYTICS = "view_analytics"
-    MANAGE_DATABASE = "manage_database"
-    VIEW_AUDIT_LOG = "view_audit_log"
-
-
 @dataclass
-class LoginAttempt:
-    """Login attempt tracking"""
-
+class UserSession:
+    user_id: int
     username: str
-    ip_address: str
-    timestamp: datetime
-    success: bool
-    user_agent: str = ""
-
-
-class SecurityManager:
-    """Security and password management"""
-
-    def __init__(self):
-        self.password_requirements = {
-            "min_length": 8,
-            "require_uppercase": True,
-            "require_lowercase": True,
-            "require_numbers": True,
-            "require_special": True,
-            "special_chars": "!@#$%^&*()_+-=[]{}|;:,.<>?",
-        }
-
-        self.login_attempts = {}
-        self.max_attempts = 5
-        self.lockout_duration = timedelta(minutes=15)
-
-    def hash_password(self, password: str) -> str:
-        """Hash password using bcrypt"""
-        try:
-            salt = bcrypt.gensalt(rounds=12)
-            hashed = bcrypt.hashpw(password.encode("utf-8"), salt)
-            return hashed.decode("utf-8")
-        except Exception as e:
-            logger.error(f"Password hashing failed: {str(e)}")
-            raise
-
-    def verify_password(self, password: str, hashed: str) -> bool:
-        """Verify password against hash"""
-        try:
-            return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
-        except Exception as e:
-            logger.error(f"Password verification failed: {str(e)}")
-            return False
-
-    def validate_password_strength(self, password: str) -> Dict[str, Any]:
-        """Validate password strength"""
-        result = {"valid": True, "errors": [], "score": 0, "suggestions": []}
-
-        # Length check
-        if len(password) < self.password_requirements["min_length"]:
-            result["valid"] = False
-            result["errors"].append(
-                f"รหัสผ่านต้องมีอย่างน้อย {self.password_requirements['min_length']} ตัวอักษร"
-            )
-        else:
-            result["score"] += 20
-
-        # Uppercase check
-        if self.password_requirements["require_uppercase"] and not re.search(
-            r"[A-Z]", password
-        ):
-            result["valid"] = False
-            result["errors"].append("รหัสผ่านต้องมีตัวอักษรพิมพ์ใหญ่อย่างน้อย 1 ตัว")
-        else:
-            result["score"] += 20
-
-        # Lowercase check
-        if self.password_requirements["require_lowercase"] and not re.search(
-            r"[a-z]", password
-        ):
-            result["valid"] = False
-            result["errors"].append("รหัสผ่านต้องมีตัวอักษรพิมพ์เล็กอย่างน้อย 1 ตัว")
-        else:
-            result["score"] += 20
-
-        # Numbers check
-        if self.password_requirements["require_numbers"] and not re.search(
-            r"\d", password
-        ):
-            result["valid"] = False
-            result["errors"].append("รหัสผ่านต้องมีตัวเลขอย่างน้อย 1 ตัว")
-        else:
-            result["score"] += 20
-
-        # Special characters check
-        if self.password_requirements["require_special"]:
-            special_chars = self.password_requirements["special_chars"]
-            if not re.search(f"[{re.escape(special_chars)}]", password):
-                result["valid"] = False
-                result["errors"].append("รหัสผ่านต้องมีอักขระพิเศษอย่างน้อย 1 ตัว")
-            else:
-                result["score"] += 20
-
-        # Additional strength checks
-        if len(password) > 12:
-            result["score"] += 10
-
-        if len(set(password)) > len(password) * 0.7:  # Character diversity
-            result["score"] += 10
-
-        # Common patterns check
-        common_patterns = ["123", "abc", "password", "admin", "qwerty"]
-        for pattern in common_patterns:
-            if pattern.lower() in password.lower():
-                result["score"] -= 10
-                result["suggestions"].append(f"หลีกเลี่ยงการใช้คำที่เดาได้ง่าย เช่น '{pattern}'")
-
-        return result
-
-    def track_login_attempt(
-        self, username: str, success: bool, ip_address: str = "", user_agent: str = ""
-    ):
-        """Track login attempts for security monitoring"""
-        attempt = LoginAttempt(
-            username=username,
-            ip_address=ip_address,
-            timestamp=datetime.now(),
-            success=success,
-            user_agent=user_agent,
-        )
-
-        if username not in self.login_attempts:
-            self.login_attempts[username] = []
-
-        self.login_attempts[username].append(attempt)
-
-        # Keep only recent attempts (last 24 hours)
-        cutoff_time = datetime.now() - timedelta(hours=24)
-        self.login_attempts[username] = [
-            a for a in self.login_attempts[username] if a.timestamp > cutoff_time
-        ]
-
-    def is_account_locked(self, username: str) -> bool:
-        """Check if account is locked due to failed login attempts"""
-        if username not in self.login_attempts:
-            return False
-
-        recent_attempts = [
-            a
-            for a in self.login_attempts[username]
-            if a.timestamp > datetime.now() - self.lockout_duration
-        ]
-
-        failed_attempts = [a for a in recent_attempts if not a.success]
-
-        return len(failed_attempts) >= self.max_attempts
-
-    def get_lockout_time_remaining(self, username: str) -> Optional[timedelta]:
-        """Get remaining lockout time"""
-        if not self.is_account_locked(username):
-            return None
-
-        recent_failed = [
-            a
-            for a in self.login_attempts[username]
-            if not a.success and a.timestamp > datetime.now() - self.lockout_duration
-        ]
-
-        if recent_failed:
-            last_attempt = max(recent_failed, key=lambda x: x.timestamp)
-            unlock_time = last_attempt.timestamp + self.lockout_duration
-            remaining = unlock_time - datetime.now()
-            return remaining if remaining.total_seconds() > 0 else None
-
-        return None
-
-    def generate_secure_token(self, length: int = 32) -> str:
-        """Generate secure random token"""
-        return secrets.token_urlsafe(length)
-
-
-class PermissionManager:
-    """Permission and role management"""
-
-    def __init__(self):
-        # Define role permissions
-        self.role_permissions = {
-            UserRole.ADMIN: [p for p in Permission],  # All permissions
-            UserRole.PROJECT_MANAGER: [
-                Permission.CREATE_USER,
-                Permission.READ_USER,
-                Permission.UPDATE_USER,
-                Permission.CREATE_PROJECT,
-                Permission.READ_PROJECT,
-                Permission.UPDATE_PROJECT,
-                Permission.DELETE_PROJECT,
-                Permission.CREATE_TASK,
-                Permission.READ_TASK,
-                Permission.UPDATE_TASK,
-                Permission.DELETE_TASK,
-                Permission.VIEW_ANALYTICS,
-                Permission.VIEW_AUDIT_LOG,
-            ],
-            UserRole.TEAM_LEAD: [
-                Permission.READ_USER,
-                Permission.READ_PROJECT,
-                Permission.UPDATE_PROJECT,
-                Permission.CREATE_TASK,
-                Permission.READ_TASK,
-                Permission.UPDATE_TASK,
-                Permission.DELETE_TASK,
-                Permission.VIEW_ANALYTICS,
-            ],
-            UserRole.DEVELOPER: [
-                Permission.READ_USER,
-                Permission.READ_PROJECT,
-                Permission.READ_TASK,
-                Permission.UPDATE_TASK,
-            ],
-            UserRole.USER: [
-                Permission.READ_USER,
-                Permission.READ_PROJECT,
-                Permission.READ_TASK,
-                Permission.UPDATE_TASK,
-            ],
-            UserRole.VIEWER: [
-                Permission.READ_USER,
-                Permission.READ_PROJECT,
-                Permission.READ_TASK,
-            ],
-        }
-
-    def get_user_permissions(self, role: str) -> List[Permission]:
-        """Get permissions for a user role"""
-        try:
-            user_role = UserRole(role)
-            return self.role_permissions.get(user_role, [])
-        except ValueError:
-            logger.warning(f"Unknown user role: {role}")
-            return []
-
-    def user_has_permission(self, user_role: str, permission: Permission) -> bool:
-        """Check if user has specific permission"""
-        user_permissions = self.get_user_permissions(user_role)
-        return permission in user_permissions
-
-    def require_permission(self, permission: Permission):
-        """Decorator to require specific permission"""
-
-        def decorator(func):
-            def wrapper(*args, **kwargs):
-                if not st.session_state.get("authenticated", False):
-                    st.error("❌ กรุณาเข้าสู่ระบบ")
-                    return None
-
-                user_role = st.session_state.get("user", {}).get("Role", "User")
-
-                if not self.user_has_permission(user_role, permission):
-                    st.error("❌ คุณไม่มีสิทธิ์ในการดำเนินการนี้")
-                    return None
-
-                return func(*args, **kwargs)
-
-            return wrapper
-
-        return decorator
+    role: str
+    permissions: Dict[str, bool]
+    login_time: datetime
+    last_activity: datetime
 
 
 class AuthManager:
-    """Main authentication manager"""
+    """Complete authentication and authorization system"""
 
     def __init__(self, db_manager):
-        self.db_manager = db_manager
-        self.security_manager = SecurityManager()
-        self.permission_manager = PermissionManager()
+        self.db = db_manager
+        self.session_timeout = 3600  # 1 hour
+        self.max_failed_attempts = 5
+        self._init_session_state()
 
-    def authenticate_user(
-        self, username: str, password: str, ip_address: str = "", user_agent: str = ""
-    ) -> Optional[Dict[str, Any]]:
-        """Authenticate user with enhanced security"""
+    def _init_session_state(self):
+        """Initialize session state variables"""
+        if "authenticated" not in st.session_state:
+            st.session_state.authenticated = False
+        if "user_session" not in st.session_state:
+            st.session_state.user_session = None
+        if "login_attempts" not in st.session_state:
+            st.session_state.login_attempts = 0
+
+    def authenticate(self, username: str, password: str) -> bool:
+        """Main authentication method"""
         try:
-            # Check if account is locked
-            if self.security_manager.is_account_locked(username):
-                remaining = self.security_manager.get_lockout_time_remaining(username)
-                if remaining:
-                    minutes = int(remaining.total_seconds() / 60)
-                    logger.warning(f"Login attempt on locked account: {username}")
-                    st.error(f"⚠️ บัญชีถูกล็อก กรุณารอ {minutes} นาที")
-                    return None
+            # Rate limiting check
+            if self._is_rate_limited():
+                return False
 
-            # Get user from database
-            query = """
-            SELECT UserID, Username, PasswordHash, Email, FirstName, LastName, 
-                   Role, Department, Phone, IsActive, LastLoginDate
-            FROM Users 
-            WHERE Username = ? AND IsActive = 1
-            """
+            # Get user data
+            user = self._get_user_data(username)
+            if not user:
+                self._handle_failed_attempt()
+                return False
 
-            users = self.db_manager.execute_query(query, (username,))
-
-            if not users:
-                # Track failed attempt
-                self.security_manager.track_login_attempt(
-                    username, False, ip_address, user_agent
-                )
-                logger.warning(f"Login attempt with non-existent username: {username}")
-                return None
-
-            user = users[0]
+            # Verify user status
+            if not self._verify_user_status(user):
+                return False
 
             # Verify password
-            if not self.security_manager.verify_password(
-                password, user["PasswordHash"]
-            ):
-                # Track failed attempt
-                self.security_manager.track_login_attempt(
-                    username, False, ip_address, user_agent
-                )
-                logger.warning(f"Failed login attempt for user: {username}")
-                return None
-
-            # Track successful attempt
-            self.security_manager.track_login_attempt(
-                username, True, ip_address, user_agent
-            )
-
-            # Update last login
-            self.update_user_last_login(user["UserID"], ip_address)
-
-            # Remove password hash from returned user data
-            user.pop("PasswordHash", None)
-
-            logger.info(f"Successful login: {username}")
-            return user
-
-        except Exception as e:
-            logger.error(f"Authentication error: {str(e)}")
-            return None
-
-    def create_user(self, user_data: Dict[str, Any]) -> bool:
-        """Create new user with validation"""
-        try:
-            # Validate required fields
-            required_fields = [
-                "username",
-                "password",
-                "email",
-                "first_name",
-                "last_name",
-            ]
-            for field in required_fields:
-                if not user_data.get(field):
-                    logger.error(f"Missing required field: {field}")
-                    return False
-
-            # Validate password strength
-            password_validation = self.security_manager.validate_password_strength(
-                user_data["password"]
-            )
-            if not password_validation["valid"]:
-                logger.error(
-                    f"Password validation failed: {password_validation['errors']}"
-                )
+            if not self._verify_password(password, user["PasswordHash"]):
+                self._handle_failed_login(user["UserID"])
+                self._handle_failed_attempt()
                 return False
 
-            # Check if username or email already exists
-            existing_user = self.db_manager.execute_query(
-                "SELECT UserID FROM Users WHERE Username = ? OR Email = ?",
-                (user_data["username"], user_data["email"]),
-            )
+            # Success - create session
+            self._create_user_session(user)
+            self._update_login_success(user["UserID"])
+            self._reset_failed_attempts()
 
-            if existing_user:
-                logger.error(
-                    f"User already exists: {user_data['username']} or {user_data['email']}"
-                )
-                return False
-
-            # Hash password
-            password_hash = self.security_manager.hash_password(user_data["password"])
-
-            # Insert user
-            query = """
-            INSERT INTO Users (Username, PasswordHash, Email, FirstName, LastName, 
-                              Role, Department, Phone, CreatedDate)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, GETDATE())
-            """
-
-            params = (
-                user_data["username"],
-                password_hash,
-                user_data["email"],
-                user_data["first_name"],
-                user_data["last_name"],
-                user_data.get("role", "User"),
-                user_data.get("department", ""),
-                user_data.get("phone", ""),
-            )
-
-            result = self.db_manager.execute_non_query(query, params)
-
-            if result:
-                logger.info(f"User created successfully: {user_data['username']}")
-
-            return result
+            logger.info(f"User '{username}' authenticated successfully")
+            return True
 
         except Exception as e:
-            logger.error(f"User creation failed: {str(e)}")
+            logger.error(f"Authentication error: {e}")
             return False
 
-    def update_user_password(
-        self, user_id: int, current_password: str, new_password: str
-    ) -> bool:
-        """Update user password with validation"""
+    def _get_user_data(self, username: str) -> Optional[Dict[str, Any]]:
+        """Get user data from database"""
         try:
-            # Get current user
-            user = self.db_manager.execute_query(
-                "SELECT PasswordHash FROM Users WHERE UserID = ?", (user_id,)
+            users = self.db.execute_query(
+                """SELECT UserID, Username, PasswordHash, Email, FirstName, LastName, 
+                   Role, Department, IsActive, IsLocked, FailedLoginAttempts 
+                   FROM Users WHERE Username = ?""",
+                (username,),
             )
-
-            if not user:
-                return False
-
-            # Verify current password
-            if not self.security_manager.verify_password(
-                current_password, user[0]["PasswordHash"]
-            ):
-                logger.warning(f"Invalid current password for user ID: {user_id}")
-                return False
-
-            # Validate new password
-            password_validation = self.security_manager.validate_password_strength(
-                new_password
-            )
-            if not password_validation["valid"]:
-                logger.error(
-                    f"New password validation failed: {password_validation['errors']}"
-                )
-                return False
-
-            # Hash new password
-            new_password_hash = self.security_manager.hash_password(new_password)
-
-            # Update password
-            result = self.db_manager.execute_non_query(
-                "UPDATE Users SET PasswordHash = ?, LastModifiedDate = GETDATE() WHERE UserID = ?",
-                (new_password_hash, user_id),
-            )
-
-            if result:
-                logger.info(f"Password updated for user ID: {user_id}")
-
-            return result
-
-        except Exception as e:
-            logger.error(f"Password update failed: {str(e)}")
-            return False
-
-    def update_user_last_login(self, user_id: int, ip_address: str = ""):
-        """Update user's last login timestamp"""
-        try:
-            self.db_manager.execute_non_query(
-                "UPDATE Users SET LastLoginDate = GETDATE() WHERE UserID = ?",
-                (user_id,),
-            )
-
-            # Log login activity (could be stored in audit table)
-            logger.info(f"User login recorded: ID={user_id}, IP={ip_address}")
-
-        except Exception as e:
-            logger.error(f"Failed to update last login: {str(e)}")
-
-    def reset_password(self, username: str, new_password: str) -> bool:
-        """Reset user password (admin function)"""
-        try:
-            # Validate new password
-            password_validation = self.security_manager.validate_password_strength(
-                new_password
-            )
-            if not password_validation["valid"]:
-                return False
-
-            # Hash new password
-            password_hash = self.security_manager.hash_password(new_password)
-
-            # Update password
-            result = self.db_manager.execute_non_query(
-                "UPDATE Users SET PasswordHash = ?, LastModifiedDate = GETDATE() WHERE Username = ?",
-                (password_hash, username),
-            )
-
-            if result:
-                logger.info(f"Password reset for user: {username}")
-
-            return result
-
-        except Exception as e:
-            logger.error(f"Password reset failed: {str(e)}")
-            return False
-
-    def deactivate_user(self, user_id: int) -> bool:
-        """Deactivate user account"""
-        try:
-            result = self.db_manager.execute_non_query(
-                "UPDATE Users SET IsActive = 0, LastModifiedDate = GETDATE() WHERE UserID = ?",
-                (user_id,),
-            )
-
-            if result:
-                logger.info(f"User deactivated: ID={user_id}")
-
-            return result
-
-        except Exception as e:
-            logger.error(f"User deactivation failed: {str(e)}")
-            return False
-
-    def activate_user(self, user_id: int) -> bool:
-        """Activate user account"""
-        try:
-            result = self.db_manager.execute_non_query(
-                "UPDATE Users SET IsActive = 1, LastModifiedDate = GETDATE() WHERE UserID = ?",
-                (user_id,),
-            )
-
-            if result:
-                logger.info(f"User activated: ID={user_id}")
-
-            return result
-
-        except Exception as e:
-            logger.error(f"User activation failed: {str(e)}")
-            return False
-
-    def get_all_users(self) -> List[Dict[str, Any]]:
-        """Get all users (excluding password hashes)"""
-        query = """
-        SELECT UserID, Username, Email, FirstName, LastName, Role, 
-               Department, Phone, IsActive, CreatedDate, LastLoginDate
-        FROM Users 
-        ORDER BY FirstName, LastName
-        """
-
-        try:
-            return self.db_manager.execute_query(query)
-        except Exception as e:
-            logger.error(f"Failed to get users: {str(e)}")
-            return []
-
-    def get_user_by_id(self, user_id: int) -> Optional[Dict[str, Any]]:
-        """Get user by ID"""
-        query = """
-        SELECT UserID, Username, Email, FirstName, LastName, Role, 
-               Department, Phone, IsActive, CreatedDate, LastLoginDate
-        FROM Users 
-        WHERE UserID = ?
-        """
-
-        try:
-            users = self.db_manager.execute_query(query, (user_id,))
             return users[0] if users else None
         except Exception as e:
-            logger.error(f"Failed to get user by ID: {str(e)}")
+            logger.error(f"Error getting user data: {e}")
             return None
 
-    def get_login_attempts(
-        self, username: str = None, limit: int = 100
-    ) -> List[Dict[str, Any]]:
-        """Get login attempts for monitoring"""
-        attempts = []
-
-        if username:
-            user_attempts = self.security_manager.login_attempts.get(username, [])
-        else:
-            user_attempts = []
-            for user_attempts_list in self.security_manager.login_attempts.values():
-                user_attempts.extend(user_attempts_list)
-
-        # Sort by timestamp (newest first)
-        user_attempts.sort(key=lambda x: x.timestamp, reverse=True)
-
-        # Convert to dict format and limit results
-        for attempt in user_attempts[:limit]:
-            attempts.append(
-                {
-                    "username": attempt.username,
-                    "ip_address": attempt.ip_address,
-                    "timestamp": attempt.timestamp,
-                    "success": attempt.success,
-                    "user_agent": attempt.user_agent,
-                }
-            )
-
-        return attempts
-
-    def check_session_validity(self) -> bool:
-        """Check if current session is valid"""
-        if not st.session_state.get("authenticated", False):
+    def _verify_user_status(self, user: Dict[str, Any]) -> bool:
+        """Verify user account status"""
+        if not user["IsActive"]:
+            st.error("🚫 บัญชีผู้ใช้ถูกปิดใช้งาน")
             return False
 
-        # Check session timeout
-        last_activity = st.session_state.get("last_activity")
-        if last_activity:
-            timeout_minutes = 60  # 1 hour
-            if datetime.now() - last_activity > timedelta(minutes=timeout_minutes):
-                return False
+        if user["IsLocked"]:
+            st.error("🔒 บัญชีผู้ใช้ถูกล็อค กรุณาติดต่อผู้ดูแลระบบ")
+            return False
 
         return True
 
-    def has_permission(self, permission: Permission) -> bool:
-        """Check if current user has permission"""
+    def _verify_password(self, password: str, password_hash: str) -> bool:
+        """Verify password against stored hash"""
+        try:
+            if BCRYPT_AVAILABLE and password_hash.startswith("$2b$"):
+                return bcrypt.checkpw(
+                    password.encode("utf-8"), password_hash.encode("utf-8")
+                )
+            else:
+                # Fallback for development
+                simple_hash = hashlib.sha256(password.encode("utf-8")).hexdigest()
+                return simple_hash == password_hash
+        except Exception as e:
+            logger.error(f"Password verification error: {e}")
+            return False
+
+    def _create_user_session(self, user: Dict[str, Any]):
+        """Create user session"""
+        permissions = self._get_user_permissions(user["Role"])
+
+        session = UserSession(
+            user_id=user["UserID"],
+            username=user["Username"],
+            role=user["Role"],
+            permissions=permissions,
+            login_time=datetime.now(),
+            last_activity=datetime.now(),
+        )
+
+        st.session_state.authenticated = True
+        st.session_state.user_session = session
+        st.session_state.username = user["Username"]
+        st.session_state.user_role = user["Role"]
+        st.session_state.user_id = user["UserID"]
+
+    def _get_user_permissions(self, role: str) -> Dict[str, bool]:
+        """Get permissions based on user role"""
+        permissions_map = {
+            "Admin": {
+                "manage_users": True,
+                "manage_projects": True,
+                "manage_tasks": True,
+                "view_analytics": True,
+                "system_settings": True,
+                "database_admin": True,
+                "manage_roles": True,
+                "export_data": True,
+            },
+            "Project Manager": {
+                "manage_users": False,
+                "manage_projects": True,
+                "manage_tasks": True,
+                "view_analytics": True,
+                "system_settings": False,
+                "database_admin": False,
+                "manage_roles": False,
+                "export_data": True,
+            },
+            "Team Lead": {
+                "manage_users": False,
+                "manage_projects": False,
+                "manage_tasks": True,
+                "view_analytics": True,
+                "system_settings": False,
+                "database_admin": False,
+                "manage_roles": False,
+                "export_data": False,
+            },
+            "Developer": {
+                "manage_users": False,
+                "manage_projects": False,
+                "manage_tasks": False,
+                "view_analytics": False,
+                "system_settings": False,
+                "database_admin": False,
+                "manage_roles": False,
+                "export_data": False,
+            },
+            "User": {
+                "manage_users": False,
+                "manage_projects": False,
+                "manage_tasks": False,
+                "view_analytics": False,
+                "system_settings": False,
+                "database_admin": False,
+                "manage_roles": False,
+                "export_data": False,
+            },
+        }
+
+        return permissions_map.get(role, permissions_map["User"])
+
+    def _update_login_success(self, user_id: int):
+        """Update successful login timestamp"""
+        try:
+            self.db.execute_non_query(
+                "UPDATE Users SET LastLogin = GETDATE(), FailedLoginAttempts = 0 WHERE UserID = ?",
+                (user_id,),
+            )
+        except Exception as e:
+            logger.error(f"Error updating login success: {e}")
+
+    def _handle_failed_login(self, user_id: int):
+        """Handle failed login attempt in database"""
+        try:
+            failed_attempts = (
+                self.db.execute_scalar(
+                    "SELECT FailedLoginAttempts FROM Users WHERE UserID = ?", (user_id,)
+                )
+                or 0
+            )
+
+            failed_attempts += 1
+
+            if failed_attempts >= self.max_failed_attempts:
+                self.db.execute_non_query(
+                    """UPDATE Users SET 
+                       FailedLoginAttempts = ?, 
+                       LastFailedLogin = GETDATE(),
+                       IsLocked = 1 
+                       WHERE UserID = ?""",
+                    (failed_attempts, user_id),
+                )
+                st.error(
+                    f"🔒 บัญชีถูกล็อคเนื่องจากพยายามเข้าสู่ระบบผิด {self.max_failed_attempts} ครั้ง"
+                )
+            else:
+                self.db.execute_non_query(
+                    """UPDATE Users SET 
+                       FailedLoginAttempts = ?, 
+                       LastFailedLogin = GETDATE() 
+                       WHERE UserID = ?""",
+                    (failed_attempts, user_id),
+                )
+                remaining = self.max_failed_attempts - failed_attempts
+                st.warning(f"⚠️ รหัสผ่านไม่ถูกต้อง เหลือโอกาสอีก {remaining} ครั้ง")
+
+        except Exception as e:
+            logger.error(f"Error handling failed login: {e}")
+
+    def _is_rate_limited(self) -> bool:
+        """Check if user is rate limited"""
+        if st.session_state.login_attempts >= 10:
+            st.error("🚫 คุณพยายามเข้าสู่ระบบมากเกินไป กรุณารอสักครู่")
+            return True
+        return False
+
+    def _handle_failed_attempt(self):
+        """Handle failed attempt in session"""
+        st.session_state.login_attempts += 1
+        st.error("❌ ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง")
+
+    def _reset_failed_attempts(self):
+        """Reset failed attempts counter"""
+        st.session_state.login_attempts = 0
+
+    def logout(self):
+        """Logout user and clear session"""
+        if st.session_state.get("user_session"):
+            username = st.session_state.user_session.username
+            logger.info(f"User '{username}' logged out")
+
+        # Clear all session data
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+
+        st.session_state.authenticated = False
+        st.success("✅ ออกจากระบบเรียบร้อยแล้ว")
+
+    def is_authenticated(self) -> bool:
+        """Check if user is authenticated"""
         if not st.session_state.get("authenticated", False):
             return False
 
-        user_role = st.session_state.get("user", {}).get("Role", "User")
-        return self.permission_manager.user_has_permission(user_role, permission)
+        session = st.session_state.get("user_session")
+        if not session:
+            return False
 
-    def require_permission(self, permission: Permission):
-        """Decorator to require permission"""
-        return self.permission_manager.require_permission(permission)
+        # Check session timeout
+        if self._is_session_expired(session):
+            self.logout()
+            st.warning("⏰ Session หมดอายุ กรุณาเข้าสู่ระบบใหม่")
+            return False
 
-    def get_security_stats(self) -> Dict[str, Any]:
-        """Get security statistics"""
-        stats = {
-            "total_users": 0,
-            "active_users": 0,
-            "locked_accounts": 0,
-            "failed_logins_24h": 0,
-            "successful_logins_24h": 0,
-            "recent_login_attempts": [],
-        }
+        # Update last activity
+        session.last_activity = datetime.now()
+        return True
+
+    def _is_session_expired(self, session: UserSession) -> bool:
+        """Check if session is expired"""
+        if not session.last_activity:
+            return True
+
+        elapsed = (datetime.now() - session.last_activity).total_seconds()
+        return elapsed > self.session_timeout
+
+    def get_current_user(self) -> Optional[UserSession]:
+        """Get current authenticated user"""
+        if self.is_authenticated():
+            return st.session_state.user_session
+        return None
+
+    def has_permission(self, permission: str) -> bool:
+        """Check if current user has specific permission"""
+        session = self.get_current_user()
+        if not session:
+            return False
+        return session.permissions.get(permission, False)
+
+    def require_permission(self, permission: str) -> bool:
+        """Require specific permission (with UI feedback)"""
+        if not self.has_permission(permission):
+            st.error(f"🚫 คุณไม่มีสิทธิ์ในการ {permission}")
+            return False
+        return True
+
+    def require_role(self, required_roles: List[str]) -> bool:
+        """Require specific role(s)"""
+        session = self.get_current_user()
+        if not session or session.role not in required_roles:
+            st.error(f"🚫 ต้องมีสิทธิ์ {', '.join(required_roles)} เท่านั้น")
+            return False
+        return True
+
+    def change_password(self, old_password: str, new_password: str) -> bool:
+        """Change current user's password"""
+        session = self.get_current_user()
+        if not session:
+            return False
 
         try:
-            # Get user counts from database
-            total_users = self.db_manager.execute_scalar("SELECT COUNT(*) FROM Users")
-            active_users = self.db_manager.execute_scalar(
-                "SELECT COUNT(*) FROM Users WHERE IsActive = 1"
+            # Verify old password
+            user = self._get_user_data(session.username)
+            if not user or not self._verify_password(
+                old_password, user["PasswordHash"]
+            ):
+                st.error("❌ รหัสผ่านเดิมไม่ถูกต้อง")
+                return False
+
+            # Validate new password
+            if not self._validate_password(new_password):
+                return False
+
+            # Hash and update new password
+            new_hash = self._hash_password(new_password)
+            self.db.execute_non_query(
+                "UPDATE Users SET PasswordHash = ? WHERE UserID = ?",
+                (new_hash, session.user_id),
             )
 
-            stats["total_users"] = total_users or 0
-            stats["active_users"] = active_users or 0
-
-            # Count locked accounts
-            locked_count = 0
-            for username in self.security_manager.login_attempts:
-                if self.security_manager.is_account_locked(username):
-                    locked_count += 1
-            stats["locked_accounts"] = locked_count
-
-            # Count login attempts in last 24 hours
-            cutoff_time = datetime.now() - timedelta(hours=24)
-            failed_count = 0
-            success_count = 0
-
-            for username, attempts in self.security_manager.login_attempts.items():
-                for attempt in attempts:
-                    if attempt.timestamp > cutoff_time:
-                        if attempt.success:
-                            success_count += 1
-                        else:
-                            failed_count += 1
-
-            stats["failed_logins_24h"] = failed_count
-            stats["successful_logins_24h"] = success_count
-
-            # Get recent attempts
-            stats["recent_login_attempts"] = self.get_login_attempts(limit=10)
+            st.success("✅ เปลี่ยนรหัสผ่านเรียบร้อยแล้ว")
+            logger.info(f"Password changed for user '{session.username}'")
+            return True
 
         except Exception as e:
-            logger.error(f"Failed to get security stats: {str(e)}")
+            logger.error(f"Error changing password: {e}")
+            st.error("❌ เกิดข้อผิดพลาดในการเปลี่ยนรหัสผ่าน")
+            return False
 
-        return stats
+    def _validate_password(self, password: str) -> bool:
+        """Validate password strength"""
+        if len(password) < 8:
+            st.error("❌ รหัสผ่านต้องมีอย่างน้อย 8 ตัวอักษร")
+            return False
 
+        if not any(c.isupper() for c in password):
+            st.error("❌ รหัสผ่านต้องมีอักษรตัวใหญ่อย่างน้อย 1 ตัว")
+            return False
 
-# Helper functions for common authentication checks
-def require_auth():
-    """Decorator to require authentication"""
+        if not any(c.islower() for c in password):
+            st.error("❌ รหัสผ่านต้องมีอักษรตัวเล็กอย่างน้อย 1 ตัว")
+            return False
 
-    def decorator(func):
-        def wrapper(*args, **kwargs):
-            if not st.session_state.get("authenticated", False):
-                st.error("❌ กรุณาเข้าสู่ระบบ")
-                st.stop()
-            return func(*args, **kwargs)
+        if not any(c.isdigit() for c in password):
+            st.error("❌ รหัสผ่านต้องมีตัวเลขอย่างน้อย 1 ตัว")
+            return False
 
-        return wrapper
+        return True
 
-    return decorator
+    def _hash_password(self, password: str) -> str:
+        """Hash password for storage"""
+        if BCRYPT_AVAILABLE:
+            return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode(
+                "utf-8"
+            )
+        else:
+            # Fallback for development
+            return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
+    def get_user_info(self, username: str = None) -> Optional[Dict[str, Any]]:
+        """Get detailed user information"""
+        if not username:
+            session = self.get_current_user()
+            username = session.username if session else None
 
-def require_role(*allowed_roles):
-    """Decorator to require specific roles"""
+        if not username:
+            return None
 
-    def decorator(func):
-        def wrapper(*args, **kwargs):
-            if not st.session_state.get("authenticated", False):
-                st.error("❌ กรุณาเข้าสู่ระบบ")
-                st.stop()
+        try:
+            users = self.db.execute_query(
+                """SELECT UserID, Username, Email, FirstName, LastName, 
+                   Role, Department, IsActive, CreatedDate, LastLogin,
+                   FailedLoginAttempts, IsLocked
+                   FROM Users WHERE Username = ?""",
+                (username,),
+            )
+            return users[0] if users else None
+        except Exception as e:
+            logger.error(f"Error getting user info: {e}")
+            return None
 
-            user_role = st.session_state.get("user", {}).get("Role", "User")
-            if user_role not in allowed_roles:
-                st.error("❌ คุณไม่มีสิทธิ์ในการเข้าถึงหน้านี้")
-                st.stop()
+    def unlock_user(self, username: str) -> bool:
+        """Unlock user account (admin only)"""
+        if not self.require_permission("manage_users"):
+            return False
 
-            return func(*args, **kwargs)
+        try:
+            rows_affected = self.db.execute_non_query(
+                """UPDATE Users SET 
+                   IsLocked = 0, 
+                   FailedLoginAttempts = 0,
+                   LastFailedLogin = NULL 
+                   WHERE Username = ?""",
+                (username,),
+            )
 
-        return wrapper
+            if rows_affected > 0:
+                st.success(f"✅ ปลดล็อคบัญชี '{username}' เรียบร้อยแล้ว")
+                logger.info(f"User '{username}' unlocked by admin")
+                return True
+            else:
+                st.error(f"❌ ไม่พบบัญชี '{username}'")
+                return False
 
-    return decorator
+        except Exception as e:
+            logger.error(f"Error unlocking user: {e}")
+            st.error("❌ เกิดข้อผิดพลาดในการปลดล็อคบัญชี")
+            return False
 
+    def render_login_form(self):
+        """Render complete login form with validation"""
+        st.title("🚗 DENSO Project Manager Pro")
+        st.subheader("🔐 เข้าสู่ระบบ")
 
-def get_current_user() -> Optional[Dict[str, Any]]:
-    """Get current authenticated user"""
-    if st.session_state.get("authenticated", False):
-        return st.session_state.get("user")
-    return None
+        with st.form("login_form", clear_on_submit=False):
+            col1, col2 = st.columns([2, 1])
 
+            with col1:
+                username = st.text_input(
+                    "👤 ชื่อผู้ใช้", placeholder="กรอกชื่อผู้ใช้", help="ใช้ชื่อผู้ใช้ที่ได้รับจากผู้ดูแลระบบ"
+                )
 
-def is_admin() -> bool:
-    """Check if current user is admin"""
-    user = get_current_user()
-    return user and user.get("Role") == "Admin"
+                password = st.text_input(
+                    "🔑 รหัสผ่าน",
+                    type="password",
+                    placeholder="กรอกรหัสผ่าน",
+                    help="รหัสผ่านประกอบด้วยอักษรและตัวเลข",
+                )
 
+                col_login, col_forgot = st.columns(2)
+                with col_login:
+                    login_clicked = st.form_submit_button(
+                        "🚀 เข้าสู่ระบบ", use_container_width=True, type="primary"
+                    )
 
-def is_project_manager() -> bool:
-    """Check if current user is project manager or admin"""
-    user = get_current_user()
-    return user and user.get("Role") in ["Admin", "Project Manager"]
+                with col_forgot:
+                    if st.form_submit_button("🔄 ลืมรหัสผ่าน", use_container_width=True):
+                        st.info("📧 กรุณาติดต่อผู้ดูแลระบบเพื่อรีเซ็ตรหัสผ่าน")
+
+            with col2:
+                st.markdown("### ℹ️ ข้อมูลเริ่มต้น")
+                st.code("Username: admin\nPassword: admin123")
+                st.caption("⚠️ กรุณาเปลี่ยนรหัสผ่านหลังเข้าใช้งานครั้งแรก")
+
+        if login_clicked:
+            if not username or not password:
+                st.error("❌ กรุณากรอกชื่อผู้ใช้และรหัสผ่าน")
+                return False
+
+            with st.spinner("🔄 กำลังตรวจสอบข้อมูล..."):
+                if self.authenticate(username, password):
+                    st.success("✅ เข้าสู่ระบบสำเร็จ!")
+                    st.rerun()
+                    return True
+
+        return False
+
+    def render_user_menu(self):
+        """Render user menu in sidebar"""
+        session = self.get_current_user()
+        if not session:
+            return
+
+        with st.sidebar:
+            st.markdown("---")
+            st.markdown(f"👋 **{session.username}**")
+            st.caption(f"🏷️ {session.role}")
+
+            if st.button("👤 โปรไฟล์", use_container_width=True):
+                self._show_profile_modal()
+
+            if st.button("🔧 เปลี่ยนรหัสผ่าน", use_container_width=True):
+                self._show_password_change_modal()
+
+            if st.button("🚪 ออกจากระบบ", use_container_width=True):
+                self.logout()
+                st.rerun()
+
+    def _show_profile_modal(self):
+        """Show user profile information"""
+        user_info = self.get_user_info()
+        if user_info:
+            st.json(
+                {
+                    "ชื่อผู้ใช้": user_info["Username"],
+                    "อีเมล": user_info["Email"],
+                    "ชื่อ": f"{user_info['FirstName']} {user_info['LastName']}",
+                    "ตำแหน่ง": user_info["Role"],
+                    "แผนก": user_info["Department"],
+                    "เข้าสู่ระบบล่าสุด": (
+                        str(user_info["LastLogin"])
+                        if user_info["LastLogin"]
+                        else "ไม่มีข้อมูล"
+                    ),
+                }
+            )
+
+    def _show_password_change_modal(self):
+        """Show password change form"""
+        with st.form("change_password_form"):
+            st.subheader("🔧 เปลี่ยนรหัสผ่าน")
+
+            old_password = st.text_input("รหัสผ่านเดิม", type="password")
+            new_password = st.text_input("รหัสผ่านใหม่", type="password")
+            confirm_password = st.text_input("ยืนยันรหัสผ่านใหม่", type="password")
+
+            if st.form_submit_button("🔄 เปลี่ยนรหัสผ่าน"):
+                if new_password != confirm_password:
+                    st.error("❌ รหัสผ่านใหม่ไม่ตรงกัน")
+                elif self.change_password(old_password, new_password):
+                    st.rerun()

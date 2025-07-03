@@ -264,7 +264,6 @@ DENSO_Project_Manager/
 │   └── performance_monitor.py      # ตรวจสอบประสิทธิภาพ
 │
 ├── .streamlit/                     # Streamlit config
-│   ├── config.toml                 # การตั้งค่า Streamlit
 │   ├── secrets.toml                # ข้อมูลลับ (ห้ามนำขึ้น Git)
 │   └── secrets.toml.example        # ตัวอย่างการตั้งค่า secrets
 │

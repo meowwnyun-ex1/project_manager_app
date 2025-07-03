@@ -1,6 +1,6 @@
 """
 modules/settings.py
-Settings management module - Simplified version
+Settings management module - Complete implementation
 """
 
 import logging
@@ -83,461 +83,113 @@ class SettingsManager:
                     query, (key, serialized_value, data_type, datetime.now())
                 )
 
-            # Clear cache
+            # Clear cache for this key
             self._clear_cache(key)
+            logger.info(f"Setting {key} updated successfully")
             return True
 
         except Exception as e:
             logger.error(f"Error setting {key}: {e}")
             return False
 
-    def get_system_settings(self) -> Dict[str, Any]:
-        """Get all system settings"""
+    def get_all_settings(self, category: str = None) -> Dict[str, Any]:
+        """Get all settings or settings by category"""
         try:
-            query = """
-            SELECT SettingKey, SettingValue, DataType
-            FROM Settings
-            WHERE Category = 'System' OR Category IS NULL
-            ORDER BY SettingKey
-            """
-
-            results = self.db_manager.fetch_all(query)
+            if category:
+                query = "SELECT SettingKey, SettingValue, DataType FROM Settings WHERE Category = ?"
+                results = self.db_manager.fetch_all(query, (category,))
+            else:
+                query = "SELECT SettingKey, SettingValue, DataType FROM Settings"
+                results = self.db_manager.fetch_all(query)
 
             settings = {}
             for row in results:
                 value = self._parse_setting_value(row["SettingValue"], row["DataType"])
-                # Clean key names
-                key = row["SettingKey"].replace("system_", "").replace("app_", "")
-                settings[key] = value
+                settings[row["SettingKey"]] = value
+                # Cache the setting
+                self._cache_setting(row["SettingKey"], value)
 
             return settings
 
         except Exception as e:
-            logger.error(f"Error getting system settings: {e}")
+            logger.error(f"Error getting all settings: {e}")
             return {}
 
-    def get_security_settings(self) -> Dict[str, Any]:
-        """Get security settings"""
-        try:
-            query = """
-            SELECT SettingKey, SettingValue, DataType
-            FROM Settings
-            WHERE Category = 'Security'
-            ORDER BY SettingKey
-            """
-
-            results = self.db_manager.fetch_all(query)
-
-            settings = {}
-            for row in results:
-                value = self._parse_setting_value(row["SettingValue"], row["DataType"])
-                key = row["SettingKey"].replace("security_", "")
-                settings[key] = value
-
-            return settings
-
-        except Exception as e:
-            logger.error(f"Error getting security settings: {e}")
-            return {}
-
-    def get_notification_settings(self) -> Dict[str, Any]:
-        """Get notification settings"""
-        try:
-            query = """
-            SELECT SettingKey, SettingValue, DataType
-            FROM Settings
-            WHERE Category = 'Notifications'
-            ORDER BY SettingKey
-            """
-
-            results = self.db_manager.fetch_all(query)
-
-            settings = {}
-            for row in results:
-                value = self._parse_setting_value(row["SettingValue"], row["DataType"])
-                key = row["SettingKey"].replace("notification_", "")
-                settings[key] = value
-
-            return settings
-
-        except Exception as e:
-            logger.error(f"Error getting notification settings: {e}")
-            return {}
-
-    def get_backup_settings(self) -> Dict[str, Any]:
-        """Get backup settings"""
-        try:
-            query = """
-            SELECT SettingKey, SettingValue, DataType
-            FROM Settings
-            WHERE Category = 'Backup'
-            ORDER BY SettingKey
-            """
-
-            results = self.db_manager.fetch_all(query)
-
-            settings = {}
-            for row in results:
-                value = self._parse_setting_value(row["SettingValue"], row["DataType"])
-                key = row["SettingKey"].replace("backup_", "")
-                settings[key] = value
-
-            return settings
-
-        except Exception as e:
-            logger.error(f"Error getting backup settings: {e}")
-            return {}
-
-    def update_system_settings(
+    def update_multiple_settings(
         self, settings: Dict[str, Any], user_id: int = None
     ) -> bool:
-        """Update multiple system settings"""
+        """Update multiple settings at once"""
         try:
             for key, value in settings.items():
-                setting_key = f"system_{key}" if not key.startswith("system_") else key
-                if not self.set_setting(setting_key, value, user_id):
+                if not self.set_setting(key, value, user_id):
                     return False
-
-            logger.info(f"System settings updated by user {user_id}")
             return True
-
         except Exception as e:
-            logger.error(f"Error updating system settings: {e}")
+            logger.error(f"Error updating multiple settings: {e}")
             return False
 
-    def update_security_settings(
-        self, settings: Dict[str, Any], user_id: int = None
-    ) -> bool:
-        """Update security settings"""
+    def delete_setting(self, key: str) -> bool:
+        """Delete a setting"""
         try:
-            for key, value in settings.items():
-                setting_key = (
-                    f"security_{key}" if not key.startswith("security_") else key
-                )
-                if not self.set_setting(setting_key, value, user_id):
-                    return False
-
-            logger.info(f"Security settings updated by user {user_id}")
+            query = "DELETE FROM Settings WHERE SettingKey = ?"
+            self.db_manager.execute_query(query, (key,))
+            self._clear_cache(key)
+            logger.info(f"Setting {key} deleted successfully")
             return True
-
         except Exception as e:
-            logger.error(f"Error updating security settings: {e}")
+            logger.error(f"Error deleting setting {key}: {e}")
             return False
 
-    def update_notification_settings(
-        self, settings: Dict[str, Any], user_id: int = None
-    ) -> bool:
-        """Update notification settings"""
+    def reset_to_defaults(self) -> bool:
+        """Reset all settings to defaults"""
         try:
-            for key, value in settings.items():
-                setting_key = (
-                    f"notification_{key}"
-                    if not key.startswith("notification_")
-                    else key
-                )
-                if not self.set_setting(setting_key, value, user_id):
-                    return False
+            # Delete all existing settings
+            self.db_manager.execute_query("DELETE FROM Settings")
 
-            logger.info(f"Notification settings updated by user {user_id}")
+            # Insert default settings
+            defaults = self._get_default_settings()
+            for key, value in defaults.items():
+                self.set_setting(key, value)
+
+            # Clear all cache
+            self._setting_cache.clear()
+            self._cache_expiry.clear()
+
+            logger.info("Settings reset to defaults successfully")
             return True
-
         except Exception as e:
-            logger.error(f"Error updating notification settings: {e}")
+            logger.error(f"Error resetting settings: {e}")
             return False
-
-    def update_backup_settings(
-        self, settings: Dict[str, Any], user_id: int = None
-    ) -> bool:
-        """Update backup settings"""
-        try:
-            for key, value in settings.items():
-                setting_key = f"backup_{key}" if not key.startswith("backup_") else key
-                if not self.set_setting(setting_key, value, user_id):
-                    return False
-
-            logger.info(f"Backup settings updated by user {user_id}")
-            return True
-
-        except Exception as e:
-            logger.error(f"Error updating backup settings: {e}")
-            return False
-
-    def send_test_email(self, to_email: str) -> bool:
-        """Send test email"""
-        try:
-            # Get email settings
-            smtp_server = self.get_setting("notification_smtp_server", "smtp.gmail.com")
-            smtp_port = self.get_setting("notification_smtp_port", 587)
-            smtp_username = self.get_setting("notification_smtp_username", "")
-            smtp_password = self.get_setting("notification_smtp_password", "")
-            from_email = self.get_setting(
-                "notification_from_email", "noreply@denso.com"
-            )
-            use_tls = self.get_setting("notification_use_tls", True)
-
-            if not all([smtp_server, smtp_username, smtp_password, from_email]):
-                logger.error("Email settings incomplete")
-                return False
-
-            # Create message
-            msg = MIMEMultipart()
-            msg["From"] = from_email
-            msg["To"] = to_email
-            msg["Subject"] = "DENSO Project Manager - Test Email"
-
-            body = f"""
-            <html>
-            <body>
-                <h2>🧪 Test Email from DENSO Project Manager</h2>
-                <p>This is a test email to verify that your email configuration is working correctly.</p>
-                <p><strong>Time:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
-                <p><strong>Status:</strong> ✅ Email configuration is working!</p>
-                <hr>
-                <p><small>This is an automated test message from DENSO Project Manager Pro.</small></p>
-            </body>
-            </html>
-            """
-
-            msg.attach(MIMEText(body, "html"))
-
-            # Send email
-            server = smtplib.SMTP(smtp_server, smtp_port)
-            if use_tls:
-                server.starttls()
-            server.login(smtp_username, smtp_password)
-            server.send_message(msg)
-            server.quit()
-
-            logger.info(f"Test email sent successfully to {to_email}")
-            return True
-
-        except Exception as e:
-            logger.error(f"Error sending test email: {e}")
-            return False
-
-    def get_backup_info(self) -> Dict[str, Any]:
-        """Get backup information"""
-        try:
-            # Check if SystemBackups table exists
-            query = """
-            SELECT TOP 1 BackupDate, BackupSize, BackupType 
-            FROM SystemBackups 
-            ORDER BY BackupDate DESC
-            """
-
-            last_backup = self.db_manager.fetch_one(query)
-
-            backup_count_query = "SELECT COUNT(*) as Count FROM SystemBackups"
-            backup_count_result = self.db_manager.fetch_one(backup_count_query)
-            backup_count = backup_count_result["Count"] if backup_count_result else 0
-
-            return {
-                "last_backup": (
-                    last_backup["BackupDate"].strftime("%Y-%m-%d %H:%M:%S")
-                    if last_backup and last_backup["BackupDate"]
-                    else "ยังไม่เคย"
-                ),
-                "backup_size": (
-                    last_backup["BackupSize"] / (1024 * 1024)
-                    if last_backup and last_backup["BackupSize"]
-                    else 0
-                ),
-                "backup_count": backup_count,
-                "backup_type": last_backup["BackupType"] if last_backup else "N/A",
-            }
-
-        except Exception as e:
-            logger.error(f"Error getting backup info: {e}")
-            return {
-                "last_backup": "ยังไม่เคย",
-                "backup_size": 0,
-                "backup_count": 0,
-                "backup_type": "N/A",
-            }
-
-    def create_backup(self, backup_type: str = "manual") -> bool:
-        """Create system backup"""
-        try:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_filename = f"denso_pm_backup_{timestamp}.bak"
-            backup_path = os.path.join("data", "backups", backup_filename)
-
-            # Ensure backup directory exists
-            os.makedirs(os.path.dirname(backup_path), exist_ok=True)
-
-            # Simple backup simulation (in real implementation, use proper database backup)
-            with open(backup_path, "w", encoding="utf-8") as f:
-                f.write(f"# DENSO Project Manager Backup\n")
-                f.write(f"# Created: {datetime.now()}\n")
-                f.write(f"# Type: {backup_type}\n")
-
-            # Get file size
-            backup_size = os.path.getsize(backup_path)
-
-            # Record backup in database
-            query = """
-            INSERT INTO SystemBackups (BackupDate, BackupType, BackupPath, BackupSize, CreatedBy)
-            VALUES (?, ?, ?, ?, ?)
-            """
-
-            self.db_manager.execute_query(
-                query, (datetime.now(), backup_type, backup_path, backup_size, 1)
-            )
-
-            logger.info(f"Backup created successfully: {backup_filename}")
-            return True
-
-        except Exception as e:
-            logger.error(f"Error creating backup: {e}")
-            return False
-
-    def get_backup_files(self) -> List[Dict]:
-        """Get list of backup files"""
-        try:
-            query = """
-            SELECT BackupID, BackupDate, BackupType, BackupPath, BackupSize
-            FROM SystemBackups
-            ORDER BY BackupDate DESC
-            """
-
-            results = self.db_manager.fetch_all(query)
-
-            backup_files = []
-            for row in results:
-                backup_files.append(
-                    {
-                        "id": row["BackupID"],
-                        "filename": os.path.basename(row["BackupPath"]),
-                        "created_date": row["BackupDate"].strftime("%Y-%m-%d %H:%M:%S"),
-                        "type": row["BackupType"],
-                        "size": row["BackupSize"] / (1024 * 1024),  # Convert to MB
-                        "path": row["BackupPath"],
-                    }
-                )
-
-            return backup_files
-
-        except Exception as e:
-            logger.error(f"Error getting backup files: {e}")
-            return []
 
     def cleanup_database(self) -> bool:
-        """Cleanup database"""
+        """Clean up old data and optimize database"""
         try:
-            # Clean old audit logs (older than 90 days)
-            cleanup_date = datetime.now() - timedelta(days=90)
-            query1 = "DELETE FROM AuditLog WHERE ActionDate < ?"
-            self.db_manager.execute_query(query1, (cleanup_date,))
+            # Delete old audit logs (older than 90 days)
+            cutoff_date = datetime.now() - timedelta(days=90)
 
-            # Clean old login attempts
-            query2 = "DELETE FROM LoginAttempts WHERE AttemptDate < ?"
-            self.db_manager.execute_query(query2, (cleanup_date,))
+            queries = [
+                "DELETE FROM AuditLogs WHERE CreatedDate < ?",
+                "DELETE FROM Notifications WHERE CreatedDate < ? AND IsRead = 1",
+                "DELETE FROM ActivityLog WHERE CreatedDate < ?",
+            ]
 
-            logger.info("Database cleanup completed")
+            for query in queries:
+                self.db_manager.execute_query(query, (cutoff_date,))
+
+            logger.info("Database cleanup completed successfully")
             return True
-
         except Exception as e:
             logger.error(f"Error during database cleanup: {e}")
             return False
 
-    def check_database_integrity(self) -> Dict[str, Any]:
-        """Check database integrity"""
-        try:
-            query = """
-            SELECT 
-                (SELECT COUNT(*) FROM Users) as UserCount,
-                (SELECT COUNT(*) FROM Projects) as ProjectCount,
-                (SELECT COUNT(*) FROM Tasks) as TaskCount,
-                (SELECT COUNT(*) FROM Settings) as SettingsCount
-            """
-
-            result = self.db_manager.fetch_one(query)
-
-            if result:
-                return {
-                    "status": "ok",
-                    "message": "Database integrity check passed",
-                    "details": {
-                        "user_count": result["UserCount"],
-                        "project_count": result["ProjectCount"],
-                        "task_count": result["TaskCount"],
-                        "settings_count": result["SettingsCount"],
-                    },
-                }
-            else:
-                return {
-                    "status": "error",
-                    "message": "Unable to perform integrity check",
-                }
-
-        except Exception as e:
-            logger.error(f"Error checking database integrity: {e}")
-            return {"status": "error", "message": f"Integrity check failed: {str(e)}"}
-
-    def analyze_database(self) -> Dict[str, Any]:
-        """Analyze database performance and usage"""
-        try:
-            analysis = {}
-
-            # Basic statistics
-            stats_query = """
-            SELECT 
-                'Users' as TableName, COUNT(*) as RecordCount FROM Users
-            UNION ALL
-            SELECT 'Projects', COUNT(*) FROM Projects
-            UNION ALL
-            SELECT 'Tasks', COUNT(*) FROM Tasks
-            UNION ALL
-            SELECT 'Comments', COUNT(*) FROM Comments
-            """
-
-            stats = self.db_manager.fetch_all(stats_query)
-
-            analysis["table_statistics"] = [
-                {"table": row["TableName"], "count": row["RecordCount"]}
-                for row in stats
-            ]
-
-            # Growth analysis
-            growth_query = """
-            SELECT 
-                COUNT(CASE WHEN CreatedDate >= DATEADD(day, -30, GETDATE()) THEN 1 END) as Last30Days,
-                COUNT(CASE WHEN CreatedDate >= DATEADD(day, -7, GETDATE()) THEN 1 END) as Last7Days
-            FROM (
-                SELECT CreatedDate FROM Users
-                UNION ALL
-                SELECT CreatedDate FROM Projects
-                UNION ALL
-                SELECT CreatedDate FROM Tasks
-            ) as combined
-            """
-
-            growth = self.db_manager.fetch_one(growth_query)
-            if growth:
-                analysis["growth_stats"] = {
-                    "new_records_30_days": growth["Last30Days"],
-                    "new_records_7_days": growth["Last7Days"],
-                }
-
-            analysis["recommendations"] = [
-                "Regular backup maintenance",
-                "Monitor storage usage",
-                "Review user activity patterns",
-            ]
-
-            return analysis
-
-        except Exception as e:
-            logger.error(f"Error analyzing database: {e}")
-            return {"error": f"Analysis failed: {str(e)}"}
-
-    # Private helper methods
     def _is_cached(self, key: str) -> bool:
         """Check if setting is cached and not expired"""
         if key not in self._setting_cache:
             return False
+
         if key not in self._cache_expiry:
             return False
+
         return datetime.now() < self._cache_expiry[key]
 
     def _cache_setting(self, key: str, value: Any):
@@ -548,7 +200,7 @@ class SettingsManager:
         )
 
     def _clear_cache(self, key: str = None):
-        """Clear cache for specific key or all keys"""
+        """Clear cache for specific key or all cache"""
         if key:
             self._setting_cache.pop(key, None)
             self._cache_expiry.pop(key, None)
@@ -559,29 +211,111 @@ class SettingsManager:
     def _parse_setting_value(self, value: str, data_type: str) -> Any:
         """Parse setting value based on data type"""
         try:
-            if data_type == "boolean":
+            if data_type == "bool":
                 return value.lower() in ("true", "1", "yes", "on")
-            elif data_type == "number":
-                try:
-                    return int(value)
-                except ValueError:
-                    return float(value)
+            elif data_type == "int":
+                return int(value)
+            elif data_type == "float":
+                return float(value)
             elif data_type == "json":
                 return json.loads(value)
+            elif data_type == "list":
+                return json.loads(value) if value.startswith("[") else value.split(",")
             else:
                 return value
-
         except Exception as e:
-            logger.error(f"Error parsing setting value: {e}")
+            logger.error(f"Error parsing setting value {value} as {data_type}: {e}")
             return value
 
     def _infer_data_type(self, value: Any) -> str:
         """Infer data type from value"""
         if isinstance(value, bool):
-            return "boolean"
-        elif isinstance(value, (int, float)):
-            return "number"
-        elif isinstance(value, (dict, list)):
+            return "bool"
+        elif isinstance(value, int):
+            return "int"
+        elif isinstance(value, float):
+            return "float"
+        elif isinstance(value, (list, tuple)):
+            return "json"
+        elif isinstance(value, dict):
             return "json"
         else:
             return "string"
+
+    def _get_default_settings(self) -> Dict[str, Any]:
+        """Get default settings"""
+        return {
+            # Application settings
+            "app_name": "DENSO Project Manager Pro",
+            "app_version": "1.0.0",
+            "default_theme": "auto",
+            "default_language": "th",
+            # System settings
+            "maintenance_mode": False,
+            "session_timeout": 60,
+            "items_per_page": 20,
+            "max_upload_size": 50,
+            # Security settings
+            "max_login_attempts": 5,
+            "password_min_length": 8,
+            "password_require_uppercase": True,
+            "password_require_lowercase": True,
+            "password_require_numbers": True,
+            "password_require_symbols": True,
+            # Backup settings
+            "auto_backup_enabled": True,
+            "backup_time": "02:00",
+            "backup_retention_days": 30,
+            # Notification settings
+            "enable_notifications": True,
+            "enable_email_notifications": True,
+            "notification_email": "",
+            # Performance settings
+            "log_level": "INFO",
+            "enable_audit_log": True,
+            "cache_enabled": True,
+            "cache_duration": 300,
+        }
+
+    def send_test_email(self, email_settings: Dict[str, str]) -> bool:
+        """Send a test email with given settings"""
+        try:
+            smtp_server = email_settings.get("smtp_server")
+            smtp_port = int(email_settings.get("smtp_port", 587))
+            email_user = email_settings.get("email_user")
+            email_password = email_settings.get("email_password")
+            test_recipient = email_settings.get("test_recipient")
+
+            if not all([smtp_server, email_user, email_password, test_recipient]):
+                return False
+
+            # Create message
+            msg = MIMEMultipart()
+            msg["From"] = email_user
+            msg["To"] = test_recipient
+            msg["Subject"] = "DENSO Project Manager - Test Email"
+
+            body = """
+            นี่คืออีเมลทดสอบจากระบบ DENSO Project Manager Pro
+            
+            หากคุณได้รับอีเมลนี้ แสดงว่าการตั้งค่าอีเมลถูกต้อง
+            
+            ขอบคุณ
+            ทีม DENSO Project Manager
+            """
+
+            msg.attach(MIMEText(body, "plain", "utf-8"))
+
+            # Send email
+            server = smtplib.SMTP(smtp_server, smtp_port)
+            server.starttls()
+            server.login(email_user, email_password)
+            server.send_message(msg)
+            server.quit()
+
+            logger.info(f"Test email sent successfully to {test_recipient}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error sending test email: {e}")
+            return False
