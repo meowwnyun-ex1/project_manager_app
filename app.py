@@ -1,517 +1,471 @@
-# app.py
+#!/usr/bin/env python3
 """
-🚀 DENSO Project Manager Pro - Main Application Entry Point
-Enterprise-grade project management platform with modern UI/UX and real-time collaboration
-
-Version: 2.0.0
-Author: DENSO Development Team
-License: Proprietary
+DENSO Project Manager Pro - Main Application Runner
+Entry point for the application with modular structure
 """
 
 import streamlit as st
 import sys
 import os
+from datetime import datetime, timedelta  # Import timedelta here
 import logging
-from datetime import datetime
-import traceback
+import time  # Added for time.sleep
 
-# Add project root to Python path
-project_root = os.path.dirname(os.path.abspath(__file__))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
+# Add project modules to path
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-# Import application modules
-try:
-    from enhanced_app import EnhancedProjectManagerApp
-    from database_service import get_database_service
-    from config_manager import get_config_manager
-    from error_handler import get_error_handler, handle_streamlit_errors
-    from performance_manager import get_performance_manager
-except ImportError as e:
-    st.error(f"❌ Failed to import required modules: {str(e)}")
-    st.stop()
+# Import modules
+from config.database import get_database_manager  # Use the singleton function
+from modules.auth import AuthManager
+from modules.ui_components import UIRenderer
+from modules.projects import ProjectManager
+from modules.tasks import TaskManager
+from modules.analytics import AnalyticsManager
+from modules.settings import SettingsManager
+from modules.users import UserManager
+from utils.error_handler import handle_streamlit_errors, get_error_handler
+from utils.performance_monitor import PerformanceMonitor
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[logging.FileHandler("logs/app.log"), logging.StreamHandler()],
 )
 logger = logging.getLogger(__name__)
 
-# Application configuration
-APP_CONFIG = {
-    "page_title": "DENSO Project Manager Pro",
-    "page_icon": "🚀",
-    "layout": "wide",
-    "initial_sidebar_state": "expanded",
-    "menu_items": {
-        "Get Help": "https://denso.com/support",
-        "Report a bug": "https://denso.com/support/bug-report",
-        "About": """
-        # DENSO Project Manager Pro v2.0.0
-        
-        **Enterprise Project Management Platform**
-        
-        Features:
-        - 📊 Real-time Analytics
-        - 👥 Team Collaboration  
-        - 📈 Performance Monitoring
-        - 🔒 Advanced Security
-        - 📱 Responsive Design
-        
-        © 2025 DENSO Corporation
-        """,
+# Page configuration
+st.set_page_config(
+    page_title="DENSO Project Manager Pro",
+    page_icon="🚗",
+    layout="wide",
+    initial_sidebar_state="expanded",
+    menu_items={
+        "Get Help": None,
+        "Report a bug": None,
+        "About": "DENSO Project Manager Pro",
     },
-}
+)
 
 
-def configure_streamlit():
-    """Configure Streamlit application settings"""
-    try:
-        st.set_page_config(**APP_CONFIG)
+class DENSOProjectManager:
+    """Main application class"""
 
-        # Hide Streamlit branding
-        hide_streamlit_style = """
-        <style>
-        #MainMenu {visibility: hidden;}
-        footer {visibility: hidden;}
-        header {visibility: hidden;}
-        .stDeployButton {display: none;}
-        </style>
-        """
-        st.markdown(hide_streamlit_style, unsafe_allow_html=True)
-
-        # Custom CSS for enhanced styling
-        custom_css = """
-        <style>
-        /* Import Google Fonts */
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-        
-        /* Global font family */
-        html, body, [class*="css"] {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-        }
-        
-        /* Main container styling */
-        .main {
-            padding-top: 1rem;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-        }
-        
-        /* Sidebar styling */
-        .css-1d391kg {
-            background: linear-gradient(180deg, #2E3440 0%, #3B4252 100%);
-        }
-        
-        /* Loading animation */
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(20px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        
-        .stApp > div {
-            animation: fadeIn 0.6s ease-out;
-        }
-        </style>
-        """
-        st.markdown(custom_css, unsafe_allow_html=True)
-
-        logger.info("Streamlit configuration applied successfully")
-
-    except Exception as e:
-        logger.error(f"Failed to configure Streamlit: {str(e)}")
-        st.error("Configuration error occurred")
-
-
-def check_system_requirements():
-    """Check system requirements and dependencies"""
-    requirements_met = True
-    issues = []
-
-    try:
-        # Check Python version
-        python_version = sys.version_info
-        if python_version < (3, 9):
-            requirements_met = False
-            issues.append(
-                f"Python 3.9+ required (current: {python_version.major}.{python_version.minor})"
-            )
-
-        # Check required modules
-        required_modules = [
-            "streamlit",
-            "pandas",
-            "plotly",
-            "pyodbc",
-            "bcrypt",
-            "pydantic",
-            "yaml",
-            "psutil",
-        ]
-
-        missing_modules = []
-        for module in required_modules:
-            try:
-                __import__(module)
-            except ImportError:
-                missing_modules.append(module)
-                requirements_met = False
-
-        if missing_modules:
-            issues.append(f"Missing modules: {', '.join(missing_modules)}")
-
-        # Check database connectivity
+    def __init__(self):
+        """Initialize application"""
         try:
-            db_service = get_database_service()
-            if not db_service.connection_manager.test_connection():
-                requirements_met = False
-                issues.append("Database connection failed")
+            # Initialize managers (using get_database_manager for singleton)
+            self.db_manager = get_database_manager()
+            self.auth_manager = AuthManager(self.db_manager)
+            self.ui_renderer = UIRenderer()
+            self.project_manager = ProjectManager(self.db_manager)
+            self.task_manager = TaskManager(self.db_manager)
+            self.analytics_manager = AnalyticsManager(self.db_manager)
+            self.settings_manager = SettingsManager(self.db_manager)
+            self.user_manager = UserManager(self.db_manager)
+            self.performance_monitor = PerformanceMonitor()
+
+            # Initialize session state
+            self._initialize_session_state()
+
+            logger.info("DENSO Project Manager initialized successfully")
+
         except Exception as e:
-            requirements_met = False
-            issues.append(f"Database check failed: {str(e)}")
+            logger.error(f"Failed to initialize application: {str(e)}")
+            st.error(f"ไม่สามารถเริ่มต้นระบบได้: {str(e)}")
+            # If initialization fails, terminate Streamlit gracefully
+            st.stop()
 
-        return requirements_met, issues
+    def _initialize_session_state(self):
+        """Initialize session state variables"""
+        defaults = {
+            "authenticated": False,
+            "user": None,
+            "current_page": "Dashboard",
+            "show_new_project": False,
+            "show_new_task": False,
+            "show_new_user": False,
+            "selected_project": None,
+            "selected_task": None,
+            "theme": "light",
+            "language": "th",
+            "last_activity": datetime.now(),
+            "show_register": False,  # Ensure this is initialized
+        }
 
-    except Exception as e:
-        logger.error(f"System requirements check failed: {str(e)}")
-        return False, [f"Requirements check error: {str(e)}"]
+        for key, value in defaults.items():
+            if key not in st.session_state:
+                st.session_state[key] = value
 
-
-def show_system_status():
-    """Display system status and health information"""
-    st.sidebar.markdown("---")
-
-    with st.sidebar.expander("🏥 System Status", expanded=False):
-        # System health indicators
-        requirements_met, issues = check_system_requirements()
-
-        if requirements_met:
-            st.success("🟢 All systems operational")
-        else:
-            st.error("🔴 System issues detected")
-            for issue in issues:
-                st.error(f"• {issue}")
-
-        # Performance metrics
+    @handle_streamlit_errors
+    def run(self):
+        """Main application runner"""
         try:
-            performance_manager = get_performance_manager()
-            metrics = performance_manager.get_performance_metrics()
+            # Start performance monitoring
+            with self.performance_monitor.measure_time("app_render"):
 
-            if metrics:
-                st.metric(
-                    "Memory Usage",
-                    f"{metrics.get('system_metrics', {}).get('memory_percent', 0):.1f}%",
-                )
-                st.metric(
-                    "CPU Usage",
-                    f"{metrics.get('system_metrics', {}).get('cpu_percent', 0):.1f}%",
-                )
+                # Apply CSS styles
+                self.ui_renderer.apply_styles()
+
+                # Check session timeout
+                self._check_session_timeout()
+
+                # Check authentication
+                if not st.session_state.authenticated:
+                    self._show_login_page()
+                else:
+                    self._show_main_application()
+
         except Exception as e:
-            st.warning(f"Performance metrics unavailable: {str(e)}")
+            logger.error(f"Application error: {str(e)}")
+            st.error("เกิดข้อผิดพลาดในระบบ กรุณาลองใหม่อีกครั้ง")
 
-        # Last updated
-        st.caption(f"Updated: {datetime.now().strftime('%H:%M:%S')}")
+    def _check_session_timeout(self):
+        """Check session timeout"""
+        if st.session_state.authenticated:
+            last_activity = st.session_state.get("last_activity", datetime.now())
+            timeout_minutes = 60  # 1 hour timeout
 
+            if datetime.now() - last_activity > timedelta(minutes=timeout_minutes):
+                st.session_state.authenticated = False
+                st.session_state.user = None
+                st.warning("เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่")
+                st.rerun()
+            else:
+                st.session_state.last_activity = datetime.now()
 
-def show_loading_screen():
-    """Show application loading screen"""
-    loading_container = st.empty()
+    def _show_login_page(self):
+        """Show login page"""
+        # Show header
+        self.ui_renderer.show_header()
 
-    with loading_container.container():
+        # Login form
         col1, col2, col3 = st.columns([1, 2, 1])
 
         with col2:
-            st.markdown(
-                """
-            <div style="text-align: center; padding: 50px;">
-                <h1 style="color: white; font-size: 3rem; margin-bottom: 20px;">
-                    🚀 DENSO Project Manager Pro
-                </h1>
-                <div style="color: rgba(255,255,255,0.8); font-size: 1.2rem; margin-bottom: 30px;">
-                    Loading your workspace...
+            with st.container():
+                st.markdown(
+                    """
+                <div class="login-container">
+                    <h2 style="text-align: center; margin-bottom: 2rem;">🔐 เข้าสู่ระบบ</h2>
                 </div>
-                <div style="background: rgba(255,255,255,0.2); height: 4px; border-radius: 2px; overflow: hidden;">
-                    <div style="background: white; height: 100%; width: 0%; animation: loading 2s ease-in-out infinite;">
-                    </div>
-                </div>
-            </div>
-            
-            <style>
-            @keyframes loading {
-                0% { width: 0%; }
-                50% { width: 70%; }
-                100% { width: 100%; }
-            }
-            </style>
-            """,
-                unsafe_allow_html=True,
+                """,
+                    unsafe_allow_html=True,
+                )
+
+                with st.form("login_form"):
+                    username = st.text_input(
+                        "👤 ชื่อผู้ใช้",
+                        placeholder="กรอกชื่อผู้ใช้",
+                        help="ใช้ชื่อผู้ใช้ที่ได้รับจากผู้ดูแลระบบ",
+                    )
+                    password = st.text_input(
+                        "🔒 รหัสผ่าน",
+                        type="password",
+                        placeholder="กรอกรหัสผ่าน",
+                        help="รหัสผ่านต้องมีอย่างน้อย 8 ตัวอักษร",
+                    )
+
+                    remember_me = st.checkbox("จดจำการเข้าสู่ระบบ")
+
+                    col1_form, col2_form = st.columns(
+                        2
+                    )  # Renamed to avoid conflict with outer columns
+                    with col1_form:
+                        login_button = st.form_submit_button(
+                            "🚀 เข้าสู่ระบบ", use_container_width=True, type="primary"
+                        )
+                    with col2_form:
+                        register_button = st.form_submit_button(
+                            "📝 สมัครสมาชิก", use_container_width=True
+                        )
+
+                    if login_button:
+                        self._handle_login(username, password, remember_me)
+
+                    if register_button:
+                        st.session_state.show_register = True
+                        st.rerun()
+
+                # Show registration form if needed
+                if st.session_state.get("show_register", False):
+                    self._show_registration_form()
+
+    def _handle_login(self, username: str, password: str, remember_me: bool):
+        """Handle login process"""
+        if not username or not password:
+            st.error("⚠️ กรุณากรอกชื่อผู้ใช้และรหัสผ่าน")
+            return
+
+        with st.spinner("กำลังตรวจสอบข้อมูล..."):
+            user = self.auth_manager.authenticate_user(username, password)
+
+            if user:
+                st.session_state.authenticated = True
+                st.session_state.user = user
+                st.session_state.last_activity = datetime.now()
+
+                if remember_me:
+                    # Set longer session for remember me (logic for this would need to be implemented, e.g., using cookies)
+                    # For a Streamlit app, "remember me" usually implies a longer session timeout.
+                    # As of now, `st.session_state` resets on app rerun/tab close.
+                    # Advanced "remember me" might involve server-side tokens or browser cookies managed outside st.session_state.
+                    st.session_state.remember_login = True
+                    logger.info(
+                        "Remember Me is checked, consider extending session timeout logic if needed."
+                    )
+
+                st.success("✅ เข้าสู่ระบบสำเร็จ!")
+                time.sleep(1)  # Brief pause for user feedback
+                st.rerun()
+            else:
+                st.error("❌ ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง")
+
+    def _show_registration_form(self):
+        """Show user registration form"""
+        st.markdown("---")
+        st.subheader("📝 สมัครสมาชิกใหม่")
+
+        with st.form("register_form"):
+            col1, col2 = st.columns(2)
+
+            with col1:
+                username = st.text_input("👤 ชื่อผู้ใช้", help="ใช้เป็น ID สำหรับเข้าสู่ระบบ")
+                email = st.text_input("📧 อีเมล", help="อีเมลสำหรับติดต่อ")
+                first_name = st.text_input("👨 ชื่อ")
+                department = st.selectbox(
+                    "🏢 แผนก",
+                    [
+                        "Acounting & Planning",
+                        "AR & AS",
+                        "Corporate Planning Center",
+                        "General Affairs & CSR",
+                        "Information Security",
+                        "Innovation",
+                        "Maintenance",
+                        "Production Control",
+                        "Production Engineering",
+                        "Purchasing",
+                        "Quality Assurance",
+                        "Quality Control",
+                        "Safety & Environment",
+                        "Strategic Production",
+                        "WH Logistics",
+                        "อื่นๆ",
+                    ],
+                )
+
+            with col2:
+                password = st.text_input(
+                    "🔒 รหัสผ่าน", type="password", help="อย่างน้อย 8 ตัวอักษร"
+                )
+                confirm_password = st.text_input("🔒 ยืนยันรหัสผ่าน", type="password")
+                last_name = st.text_input("👨 นามสกุล")
+                phone = st.text_input("📱 เบอร์โทรศัพท์", help="เลขหมายโทรศัพท์มือถือ")
+
+            # Terms and conditions
+            accept_terms = st.checkbox(
+                "✅ ฉันยอมรับเงื่อนไขการใช้งาน", help="จำเป็นต้องยอมรับเพื่อสมัครสมาชิก"
             )
 
-    return loading_container
+            col1_reg, col2_reg = st.columns(2)  # Renamed to avoid conflict
+            with col1_reg:
+                submit_button = st.form_submit_button(
+                    "✅ สมัครสมาชิก", use_container_width=True, type="primary"
+                )
+            with col2_reg:
+                cancel_button = st.form_submit_button(
+                    "❌ ยกเลิก", use_container_width=True
+                )
 
+            if submit_button:
+                self._handle_registration(
+                    {
+                        "username": username,
+                        "password": password,
+                        "confirm_password": confirm_password,
+                        "email": email,
+                        "first_name": first_name,
+                        "last_name": last_name,
+                        "department": department,
+                        "phone": phone,
+                        "accept_terms": accept_terms,
+                    }
+                )
 
-def handle_application_error(error: Exception, context: str = ""):
-    """Handle application-level errors"""
-    error_handler = get_error_handler()
-    error_id = error_handler.handle_error(
-        error, additional_data={"context": context, "user_agent": "Streamlit"}
-    )
+            if cancel_button:
+                st.session_state.show_register = False
+                st.rerun()
 
-    st.error(
-        f"""
-    ### ❌ Application Error
-    
-    An unexpected error occurred while {context}.
-    
-    **Error ID:** `{error_id}`
-    
-    **What you can do:**
-    1. Refresh the page and try again
-    2. Check your internet connection
-    3. Contact support if the problem persists
-    
-    **Error Details:** {str(error)}
-    """
-    )
+    def _handle_registration(self, form_data: dict):
+        """Handle user registration"""
+        # Validation
+        errors = []
 
-    # Show error details in expander for debugging
-    with st.expander("🔧 Technical Details", expanded=False):
-        st.code(traceback.format_exc())
+        if not all(
+            [
+                form_data["username"],
+                form_data["email"],
+                form_data["first_name"],
+                form_data["last_name"],
+                form_data["password"],
+                form_data["confirm_password"],
+            ]
+        ):
+            errors.append("กรุณากรอกข้อมูลที่จำเป็นให้ครบถ้วน")
 
+        if form_data["password"] != form_data["confirm_password"]:
+            errors.append("รหัสผ่านไม่ตรงกัน")
 
-def initialize_application():
-    """Initialize the main application"""
-    try:
-        # Show loading screen
-        loading_container = show_loading_screen()
+        if len(form_data["password"]) < 8:
+            errors.append("รหัสผ่านต้องมีอย่างน้อย 8 ตัวอักษร")
 
-        # Check system requirements
-        requirements_met, issues = check_system_requirements()
+        if not form_data["accept_terms"]:
+            errors.append("กรุณายอมรับเงื่อนไขการใช้งาน")
 
-        if not requirements_met:
-            loading_container.empty()
-            st.error("### ❌ System Requirements Not Met")
-            for issue in issues:
-                st.error(f"• {issue}")
+        if errors:
+            for error in errors:
+                st.error(f"❌ {error}")
+            return
 
-            st.markdown(
-                """
-            ### 🔧 How to Fix:
-            1. **Install missing dependencies:** `pip install -r requirements.txt`
-            2. **Check database connection:** Verify `.streamlit/secrets.toml`
-            3. **Update Python:** Ensure Python 3.9+ is installed
-            4. **Contact Support:** If issues persist
-            """
-            )
-            st.stop()
+        # Create user
+        user_data = {
+            "username": form_data["username"],
+            "password": form_data["password"],
+            "email": form_data["email"],
+            "first_name": form_data["first_name"],
+            "last_name": form_data["last_name"],
+            "department": form_data["department"],
+            "phone": form_data["phone"],
+            "role": "User",  # Default role
+        }
 
-        # Initialize configuration manager
-        config_manager = get_config_manager()
-        config = config_manager.get_config()
+        if self.user_manager.create_user(user_data):
+            st.success("✅ สมัครสมาชิกสำเร็จ! กรุณาเข้าสู่ระบบ")
+            st.session_state.show_register = False
+            st.rerun()
+        else:
+            st.error("❌ ไม่สามารถสมัครสมาชิกได้ ชื่อผู้ใช้หรืออีเมลอาจถูกใช้แล้ว")
 
-        # Initialize performance manager
-        performance_manager = get_performance_manager()
-        performance_manager.setup_monitoring()
+    def _show_main_application(self):
+        """Show main application interface"""
+        # Show sidebar
+        self._show_sidebar()
 
-        # Initialize enhanced application
-        app = EnhancedProjectManagerApp()
+        # Show main content based on current page
+        page = st.session_state.current_page
 
-        # Clear loading screen
-        loading_container.empty()
+        # Performance monitoring for page loads
+        with self.performance_monitor.measure_time(f"page_{page.lower()}"):
 
-        return app, config
+            if page == "Dashboard":
+                from pages.dashboard import DashboardPage
 
-    except Exception as e:
-        handle_application_error(e, "initializing the application")
-        st.stop()
+                dashboard = DashboardPage(
+                    self.analytics_manager, self.project_manager, self.task_manager
+                )
+                dashboard.show()
 
+            elif page == "Projects":
+                from pages.projects import ProjectsPage
 
-def show_maintenance_mode():
-    """Show maintenance mode screen"""
-    st.markdown(
-        """
-    <div style="text-align: center; padding: 100px 20px;">
-        <h1 style="color: white; font-size: 3rem; margin-bottom: 30px;">
-            🔧 Under Maintenance
-        </h1>
-        <div style="color: rgba(255,255,255,0.9); font-size: 1.3rem; margin-bottom: 40px;">
-            We're updating the system to serve you better.
-        </div>
-        <div style="color: rgba(255,255,255,0.7); font-size: 1rem;">
-            Expected completion: 30 minutes<br>
-            Thank you for your patience.
-        </div>
-    </div>
-    """,
-        unsafe_allow_html=True,
-    )
+                projects = ProjectsPage(self.project_manager, self.user_manager)
+                projects.show()
 
+            elif page == "Tasks":
+                from pages.tasks import TasksPage
 
-def show_error_boundary():
-    """Show error boundary for unhandled exceptions"""
-    st.markdown(
-        """
-    <div style="text-align: center; padding: 100px 20px;">
-        <h1 style="color: #ff6b6b; font-size: 3rem; margin-bottom: 30px;">
-            ⚠️ Something Went Wrong
-        </h1>
-        <div style="color: rgba(255,255,255,0.9); font-size: 1.2rem; margin-bottom: 40px;">
-            An unexpected error occurred. Please try refreshing the page.
-        </div>
-        <button onclick="window.location.reload()" style="
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border: none;
-            padding: 15px 30px;
-            border-radius: 10px;
-            font-size: 1.1rem;
-            cursor: pointer;
-            margin-right: 15px;
-        ">
-            🔄 Refresh Page
-        </button>
-        <button onclick="window.location.href='mailto:support@denso.com'" style="
-            background: transparent;
-            color: white;
-            border: 2px solid white;
-            padding: 15px 30px;
-            border-radius: 10px;
-            font-size: 1.1rem;
-            cursor: pointer;
-        ">
-            📧 Contact Support
-        </button>
-    </div>
-    """,
-        unsafe_allow_html=True,
-    )
+                tasks = TasksPage(
+                    self.task_manager, self.project_manager, self.user_manager
+                )
+                tasks.show()
+
+            elif page == "Analytics":
+                from pages.analytics import AnalyticsPage
+
+                analytics = AnalyticsPage(self.analytics_manager)
+                analytics.show()
+
+            elif page == "Users":
+                from pages.users import UsersPage
+
+                users = UsersPage(self.user_manager, self.auth_manager)
+                users.show()
+
+            elif page == "Settings":
+                from pages.settings import SettingsPage
+
+                settings = SettingsPage(self.settings_manager)
+                settings.show()
+
+            elif page == "Database Admin":
+                # Only allow Admin or Project Manager roles to access Database Admin page
+                if st.session_state.user.get("Role") in ["Admin", "Project Manager"]:
+                    from pages.database_admin import DatabaseAdminPage
+
+                    db_admin = DatabaseAdminPage(self.db_manager)
+                    db_admin.show()
+                else:
+                    st.warning("คุณไม่มีสิทธิ์เข้าถึงหน้านี้.")
+                    st.session_state.current_page = "Dashboard"  # Redirect to dashboard
+                    st.rerun()
+
+    def _show_sidebar(self):
+        """Show sidebar navigation"""
+        with st.sidebar:
+            # User info
+            self.ui_renderer.show_user_info(st.session_state.user)
+
+            # Navigation menu
+            self.ui_renderer.show_navigation_menu()
+
+            # Quick actions
+            self.ui_renderer.show_quick_actions()
+
+            # Performance info (for admins)
+            if st.session_state.user and st.session_state.user.get("Role") in [
+                "Admin",
+                "Project Manager",
+            ]:
+                self.ui_renderer.show_performance_info(self.performance_monitor)
+
+            # Logout
+            if st.button("🚪 ออกจากระบบ", use_container_width=True, type="secondary"):
+                self._handle_logout()
+
+    def _handle_logout(self):
+        """Handle user logout"""
+        # Log the logout
+        logger.info(
+            f"User {st.session_state.user.get('Username', 'Unknown')} logged out"
+        )
+
+        # Clear session state
+        for key in list(st.session_state.keys()):
+            # Keep theme and language preferences upon logout
+            if key not in ["theme", "language"]:
+                del st.session_state[key]
+
+        st.success("✅ ออกจากระบบเรียบร้อยแล้ว")
+        st.rerun()
 
 
 def main():
-    """Main application entry point"""
+    """Main function"""
     try:
-        # Configure Streamlit
-        configure_streamlit()
-
-        # Initialize session state for error tracking
-        if "error_count" not in st.session_state:
-            st.session_state.error_count = 0
-
-        # Check for maintenance mode
-        config_manager = get_config_manager()
-        if config_manager.get_config().environment == "maintenance":
-            show_maintenance_mode()
-            return
-
-        # Error boundary - if too many errors, show error screen
-        if st.session_state.error_count > 5:
-            show_error_boundary()
-            return
-
         # Initialize and run application
-        app, config = initialize_application()
-
-        # Show system status in sidebar
-        show_system_status()
-
-        # Handle Streamlit errors
-        handle_streamlit_errors()
-
-        # Run the main application
-        with get_performance_manager().measure_time("main_app_execution"):
-            app.run()
-
-        # Log successful execution
-        logger.info("Application executed successfully")
-
-    except KeyboardInterrupt:
-        logger.info("Application interrupted by user")
-        st.info("👋 Application stopped by user")
-
-    except SystemExit:
-        logger.info("Application system exit")
-        pass
+        app = DENSOProjectManager()
+        app.run()
 
     except Exception as e:
-        # Increment error count
-        st.session_state.error_count += 1
+        logger.error(f"Critical application error: {str(e)}")
+        st.error("เกิดข้อผิดพลาดร้ายแรง กรุณาติดต่อผู้ดูแลระบบ")
 
-        # Log critical error
-        logger.critical(f"Critical application error: {str(e)}")
-        logger.critical(traceback.format_exc())
-
-        # Handle error
-        handle_application_error(e, "running the main application")
-
-        # If too many errors, suggest restart
-        if st.session_state.error_count > 3:
-            st.warning(
-                """
-            ### ⚠️ Multiple Errors Detected
-            
-            The application has encountered several errors. Consider:
-            1. Refreshing the page completely
-            2. Clearing browser cache
-            3. Checking system requirements
-            4. Contacting technical support
-            """
-            )
-
-
-def health_check():
-    """Application health check endpoint"""
-    try:
-        # Test database connection
-        db_service = get_database_service()
-        db_healthy = db_service.connection_manager.test_connection()
-
-        # Test performance manager
-        performance_manager = get_performance_manager()
-        perf_healthy = performance_manager is not None
-
-        # Overall health
-        healthy = db_healthy and perf_healthy
-
-        status = {
-            "status": "healthy" if healthy else "unhealthy",
-            "timestamp": datetime.now().isoformat(),
-            "version": "2.0.0",
-            "components": {
-                "database": "healthy" if db_healthy else "unhealthy",
-                "performance_manager": "healthy" if perf_healthy else "unhealthy",
-            },
-        }
-
-        return status
-
-    except Exception as e:
-        return {
-            "status": "error",
-            "timestamp": datetime.now().isoformat(),
-            "error": str(e),
-        }
+        # Show error details for admins
+        if st.session_state.get("user", {}).get("Role") == "Admin":
+            with st.expander("รายละเอียดข้อผิดพลาด (Admin Only)"):
+                st.code(str(e))
 
 
 if __name__ == "__main__":
-    try:
-        # Set up logging for production
-        if os.getenv("ENVIRONMENT") == "production":
-            logging.basicConfig(
-                level=logging.WARNING,
-                format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-                handlers=[logging.FileHandler("logs/app.log"), logging.StreamHandler()],
-            )
-
-        # Check if running health check
-        if len(sys.argv) > 1 and sys.argv[1] == "--health":
-            health_status = health_check()
-            print(f"Health Status: {health_status['status']}")
-            sys.exit(0 if health_status["status"] == "healthy" else 1)
-
-        # Run main application
-        main()
-
-    except Exception as e:
-        print(f"Fatal error: {str(e)}")
-        traceback.print_exc()
-        sys.exit(1)
+    main()

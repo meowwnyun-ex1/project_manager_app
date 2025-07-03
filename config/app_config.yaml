@@ -1,263 +1,233 @@
 # config/app_config.yaml
 # DENSO Project Manager Pro - Application Configuration
 
-# Application Settings
 app:
-  name: 'DENSO Project Manager Pro'
+  app_name: 'DENSO Project Manager Pro'
   version: '2.0.0'
-  description: 'Enterprise-grade project management platform'
   debug: false
   log_level: 'INFO'
-  environment: 'production' # development, staging, production
-  secret_key: 'your-super-secret-key-change-this'
+  environment: 'development'
   max_upload_size_mb: 50
+  session_timeout: 3600
   timezone: 'Asia/Bangkok'
-  language: 'en'
-  company_name: 'DENSO Corporation'
-  support_email: 'support@denso.com'
+  language: 'th'
 
-# Database Configuration
 database:
-  connection_pool_size: 10
+  driver: 'ODBC Driver 17 for SQL Server'
   connection_timeout: 30
   command_timeout: 60
-  retry_count: 3
-  retry_delay: 1
-  enable_logging: true
-  log_slow_queries: true
-  slow_query_threshold: 1.0
-  enable_connection_pooling: true
+  encrypt: 'yes'
+  trust_server_certificate: 'yes'
+  pool_size: 10
+  pool_timeout: 30
   pool_recycle: 3600
 
-# Cache Configuration
+security:
+  bcrypt_rounds: 12
+  max_login_attempts: 5
+  lockout_duration: 900
+  password_min_length: 8
+  session_cookie_secure: false
+  session_cookie_httponly: true
+  session_cookie_samesite: 'strict'
+
+  # Token expiry settings (in respective units)
+  access_token_expiry_minutes: 60
+  refresh_token_expiry_days: 7
+  password_reset_token_expiry_hours: 1
+  remember_me_expiry_days: 30
+
+  # Password policy
+  password_require_uppercase: true
+  password_require_lowercase: true
+  password_require_digits: true
+  password_require_special: true
+  password_history_count: 5
+
 cache:
-  enabled: true
-  max_size_mb: 100
-  default_ttl: 3600 # 1 hour
-  cleanup_interval: 300 # 5 minutes
   redis_enabled: false
   redis_host: 'localhost'
   redis_port: 6379
-  redis_password: null
-  redis_db: 0
-  session_cache_size: 50
+  redis_password: ''
+  max_memory_mb: 100
+  default_ttl_seconds: 3600
 
-# Security Configuration
-security:
-  bcrypt_rounds: 12
-  session_timeout: 3600 # 1 hour
-  session_cookie_secure: false # Set to true in production with HTTPS
-  session_cookie_httponly: true
-  session_cookie_samesite: 'lax'
-  password_min_length: 8
-  password_require_uppercase: true
-  password_require_lowercase: true
-  password_require_numbers: true
-  password_require_special: true
-  password_expiry_days: 90
-  max_login_attempts: 5
-  lockout_duration: 900 # 15 minutes
-  enable_2fa: false
-  csrf_protection: true
-  xss_protection: true
-  content_security_policy: true
+  # Cache strategies
+  user_session_ttl: 3600
+  project_data_ttl: 1800
+  analytics_data_ttl: 900
+  file_metadata_ttl: 7200
 
-# Performance Configuration
+features:
+  enable_notifications: true
+  enable_file_upload: true
+  enable_analytics: true
+  enable_performance_monitoring: true
+  enable_audit_log: true
+  enable_backup: true
+  enable_realtime_updates: true
+  enable_dark_mode: true
+  enable_mobile_view: true
+
+email:
+  smtp_server: 'smtp.gmail.com'
+  smtp_port: 587
+  smtp_username: ''
+  smtp_password: ''
+  from_email: 'noreply@denso.com'
+  from_name: 'DENSO Project Manager'
+  enable_ssl: true
+  timeout: 30
+
+  # Email templates
+  password_reset_template: 'password_reset.html'
+  welcome_template: 'welcome.html'
+  notification_template: 'notification.html'
+
+logging:
+  level: 'INFO'
+  file_path: 'logs/app.log'
+  max_file_size_mb: 10
+  backup_count: 5
+  enable_console: true
+
+  # Log formats
+  file_format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+  console_format: '%(levelname)s - %(message)s'
+
+  # Logger configurations
+  loggers:
+    database: 'INFO'
+    security: 'WARNING'
+    performance: 'INFO'
+    api: 'DEBUG'
+
 performance:
   enable_monitoring: true
   page_load_threshold: 2.0
   memory_threshold_mb: 512
-  cpu_threshold_percent: 80
   db_query_threshold: 1.0
   cache_hit_rate_threshold: 80.0
-  enable_compression: true
-  enable_minification: false
-  lazy_loading: true
-  pagination_size: 25
-  max_concurrent_users: 100
 
-# Notification Configuration
-notifications:
-  enabled: true
-  check_interval: 300 # 5 minutes
-  max_notifications_per_user: 50
-  default_priority: 'medium'
-  auto_mark_read_days: 30
-  email_enabled: false
-  slack_enabled: false
-  teams_enabled: false
-  webhook_enabled: false
-  push_notifications: false
+  # Performance optimizations
+  enable_gzip: true
+  enable_caching: true
+  max_concurrent_requests: 100
+  request_timeout: 30
 
-  # Email settings (if enabled)
-  email:
-    smtp_server: 'smtp.denso.com'
-    smtp_port: 587
-    smtp_use_tls: true
-    smtp_username: ''
-    smtp_password: ''
-    from_email: 'noreply@denso.com'
-    from_name: 'DENSO Project Manager'
-
-# UI/UX Configuration
 ui:
-  theme: 'auto' # light, dark, auto
+  theme: 'light'
+  enable_animations: true
+  enable_glassmorphism: true
+  default_page_size: 20
+  compact_mode: false
+
+  # Theme colors
   primary_color: '#667eea'
   secondary_color: '#764ba2'
   success_color: '#10b981'
   warning_color: '#f59e0b'
   error_color: '#ef4444'
-  info_color: '#06b6d4'
 
-  enable_animations: true
-  enable_glassmorphism: true
-  enable_tooltips: true
-  show_debug_info: false
-  compact_mode: false
+  # Layout settings
   sidebar_width: 300
-  content_padding: 20
-  border_radius: 15
+  header_height: 60
+  footer_height: 40
 
-  # Chart settings
-  chart_height: 400
-  chart_colors: ['#667eea', '#764ba2', '#10b981', '#f59e0b', '#ef4444']
-  enable_chart_animations: true
-
-  # Table settings
-  table_page_size: 25
-  enable_table_sorting: true
-  enable_table_filtering: true
-  enable_table_export: true
-
-# Logging Configuration
-logging:
-  level: 'INFO' # DEBUG, INFO, WARNING, ERROR, CRITICAL
-  format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-  max_file_size_mb: 10
-  backup_count: 5
-  log_rotation: 'daily'
-
-  # Log files
-  app_log: 'logs/app.log'
-  error_log: 'logs/errors.log'
-  security_log: 'logs/security.log'
-  performance_log: 'logs/performance.log'
-  audit_log: 'logs/audit.log'
-
-  # Enable specific loggers
-  enable_database_logging: true
-  enable_security_logging: true
-  enable_performance_logging: true
-  enable_audit_logging: true
-
-# Features Configuration
-features:
-  enable_projects: true
-  enable_tasks: true
-  enable_analytics: true
-  enable_reports: true
-  enable_team_management: true
-  enable_file_upload: true
-  enable_comments: true
-  enable_time_tracking: true
-  enable_gantt_charts: true
-  enable_calendar: true
-  enable_dashboard: true
+notifications:
   enable_notifications: true
-  enable_search: true
-  enable_export: true
-  enable_api: false
-  enable_webhooks: false
-  enable_integrations: false
+  check_interval: 300
+  max_notifications_per_user: 50
+  default_priority: 'medium'
 
-# Analytics Configuration
-analytics:
-  enable_tracking: true
-  track_page_views: true
-  track_user_actions: true
-  track_performance: true
-  retention_days: 90
-  export_formats: ['json', 'csv', 'excel']
+  # Notification types
+  enable_email_notifications: true
+  enable_browser_notifications: true
+  enable_slack_notifications: false
+  enable_teams_notifications: false
 
-  # KPI calculations
-  enable_kpi_tracking: true
-  kpi_calculation_interval: 3600 # 1 hour
-  enable_predictive_analytics: false
+  # Auto-dismiss settings
+  auto_dismiss_info: 5000
+  auto_dismiss_success: 3000
+  auto_dismiss_warning: 8000
+  auto_dismiss_error: 10000
 
-# File Upload Configuration
-file_upload:
-  max_file_size_mb: 10
-  allowed_extensions: ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.png', '.jpg', '.jpeg', '.gif']
-  upload_path: 'data/uploads'
-  enable_virus_scanning: false
-  enable_file_compression: true
-  enable_file_encryption: false
-
-# Backup Configuration
 backup:
-  enabled: true
-  schedule: '0 2 * * *' # Daily at 2 AM
-  retention_days: 30
-  backup_path: 'data/backups'
-  compress_backups: true
-  encrypt_backups: false
-  notification_on_success: false
-  notification_on_failure: true
+  enable_auto_backup: true
+  backup_interval_hours: 24
+  backup_retention_days: 30
+  backup_location: 'backups/'
+  backup_compression: true
 
-# Integration Configuration
-integrations:
-  enable_api: false
+  # Backup types
+  enable_database_backup: true
+  enable_file_backup: true
+  enable_config_backup: true
+
+analytics:
+  enable_analytics: true
+  data_retention_days: 365
+  enable_real_time_analytics: true
+
+  # Analytics providers
+  enable_google_analytics: false
+  google_analytics_id: ''
+
+  # Custom analytics
+  track_user_actions: true
+  track_performance_metrics: true
+  track_error_events: true
+
+api:
+  enable_api: true
   api_version: 'v1'
-  api_rate_limit: 100 # requests per minute
-  enable_webhooks: false
-  webhook_timeout: 30
-
-  # External services
-  enable_slack: false
-  enable_teams: false
-  enable_jira: false
-  enable_github: false
-  enable_gitlab: false
-
-# Development Configuration
-development:
-  enable_debug_toolbar: false
-  enable_sql_debug: false
-  enable_performance_debug: false
-  hot_reload: false
-  mock_data: false
-  skip_authentication: false
-  enable_test_routes: false
-
-# Production Configuration
-production:
-  enable_ssl: true
-  force_https: true
-  enable_hsts: true
-  enable_content_security_policy: true
-  enable_frame_protection: true
-  enable_xss_protection: true
-  enable_content_type_protection: true
-  enable_rate_limiting: true
   rate_limit_per_minute: 60
+  enable_api_docs: true
 
-# Monitoring Configuration
-monitoring:
-  enable_health_checks: true
-  health_check_interval: 60 # seconds
-  enable_metrics_collection: true
-  metrics_retention_days: 7
-  enable_alerting: false
-  alert_thresholds:
-    cpu_percent: 80
-    memory_percent: 85
-    disk_percent: 90
-    response_time_ms: 2000
-    error_rate_percent: 5
+  # API security
+  require_api_key: true
+  enable_cors: false
+  allowed_origins: []
 
-# Maintenance Configuration
-maintenance:
-  enable_maintenance_mode: false
-  maintenance_message: 'System is under maintenance. Please try again later.'
-  allowed_ips: [] # IPs that can access during maintenance
-  maintenance_page_template: 'templates/maintenance.html'
+file_upload:
+  max_file_size_mb: 50
+  allowed_extensions:
+    [
+      '.jpg',
+      '.jpeg',
+      '.png',
+      '.gif',
+      '.pdf',
+      '.doc',
+      '.docx',
+      '.xls',
+      '.xlsx',
+      '.ppt',
+      '.pptx',
+      '.txt',
+      '.csv',
+    ]
+  upload_path: 'uploads/'
+  enable_virus_scan: false
+
+  # Image processing
+  enable_image_resize: true
+  max_image_width: 1920
+  max_image_height: 1080
+  image_quality: 85
+
+integration:
+  # External integrations
+  enable_slack: false
+  slack_webhook_url: ''
+
+  enable_teams: false
+  teams_webhook_url: ''
+
+  enable_jira: false
+  jira_url: ''
+  jira_username: ''
+  jira_api_token: ''
+
+  enable_github: false
+  github_token: ''

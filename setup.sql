@@ -1,6 +1,6 @@
 -- setup.sql
 -- DENSO Project Manager Pro - Complete Database Setup Script
--- Version: 2.0.0
+-- Version: 2.0.1 (Fixes for variable re-declaration issue)
 
 USE master;
 GO
@@ -280,77 +280,80 @@ BEGIN
 END
 GO
 
+---
 -- ============================================================================
 -- CREATE INDEXES FOR PERFORMANCE
 -- ============================================================================
 PRINT '📊 Creating indexes for optimal performance...';
 
 -- Users indexes
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Users_Username_IsActive')
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Users_Username_IsActive' AND object_id = OBJECT_ID('Users'))
     CREATE NONCLUSTERED INDEX IX_Users_Username_IsActive ON Users(Username, IsActive);
 
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Users_Email')
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Users_Email' AND object_id = OBJECT_ID('Users'))
     CREATE NONCLUSTERED INDEX IX_Users_Email ON Users(Email);
 
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Users_Role_IsActive')
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Users_Role_IsActive' AND object_id = OBJECT_ID('Users'))
     CREATE NONCLUSTERED INDEX IX_Users_Role_IsActive ON Users(Role, IsActive);
 
 -- Projects indexes
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Projects_Status_Priority')
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Projects_Status_Priority' AND object_id = OBJECT_ID('Projects'))
     CREATE NONCLUSTERED INDEX IX_Projects_Status_Priority ON Projects(Status, Priority);
 
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Projects_CreatedBy')
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Projects_CreatedBy' AND object_id = OBJECT_ID('Projects'))
     CREATE NONCLUSTERED INDEX IX_Projects_CreatedBy ON Projects(CreatedBy);
 
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Projects_CreatedDate')
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Projects_CreatedDate' AND object_id = OBJECT_ID('Projects'))
     CREATE NONCLUSTERED INDEX IX_Projects_CreatedDate ON Projects(CreatedDate);
 
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Projects_EndDate')
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Projects_EndDate' AND object_id = OBJECT_ID('Projects'))
     CREATE NONCLUSTERED INDEX IX_Projects_EndDate ON Projects(EndDate);
 
 -- Tasks indexes
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Tasks_ProjectID_Status')
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Tasks_ProjectID_Status' AND object_id = OBJECT_ID('Tasks'))
     CREATE NONCLUSTERED INDEX IX_Tasks_ProjectID_Status ON Tasks(ProjectID, Status);
 
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Tasks_AssigneeID_Status')
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Tasks_AssigneeID_Status' AND object_id = OBJECT_ID('Tasks'))
     CREATE NONCLUSTERED INDEX IX_Tasks_AssigneeID_Status ON Tasks(AssigneeID, Status);
 
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Tasks_DueDate')
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Tasks_DueDate' AND object_id = OBJECT_ID('Tasks'))
     CREATE NONCLUSTERED INDEX IX_Tasks_DueDate ON Tasks(DueDate);
 
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Tasks_Priority_Status')
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Tasks_Priority_Status' AND object_id = OBJECT_ID('Tasks'))
     CREATE NONCLUSTERED INDEX IX_Tasks_Priority_Status ON Tasks(Priority, Status);
 
 -- Comments indexes
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Comments_EntityType_EntityID')
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Comments_EntityType_EntityID' AND object_id = OBJECT_ID('Comments'))
     CREATE NONCLUSTERED INDEX IX_Comments_EntityType_EntityID ON Comments(EntityType, EntityID);
 
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Comments_UserID_CreatedDate')
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Comments_UserID_CreatedDate' AND object_id = OBJECT_ID('Comments'))
     CREATE NONCLUSTERED INDEX IX_Comments_UserID_CreatedDate ON Comments(UserID, CreatedDate);
 
 -- Notifications indexes
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Notifications_UserID_IsRead')
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Notifications_UserID_IsRead' AND object_id = OBJECT_ID('Notifications'))
     CREATE NONCLUSTERED INDEX IX_Notifications_UserID_IsRead ON Notifications(UserID, IsRead);
 
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Notifications_CreatedDate')
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Notifications_CreatedDate' AND object_id = OBJECT_ID('Notifications'))
     CREATE NONCLUSTERED INDEX IX_Notifications_CreatedDate ON Notifications(CreatedDate);
 
 -- TimeTracking indexes
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_TimeTracking_TaskID_UserID')
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_TimeTracking_TaskID_UserID' AND object_id = OBJECT_ID('TimeTracking'))
     CREATE NONCLUSTERED INDEX IX_TimeTracking_TaskID_UserID ON TimeTracking(TaskID, UserID);
 
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_TimeTracking_StartTime')
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_TimeTracking_StartTime' AND object_id = OBJECT_ID('TimeTracking'))
     CREATE NONCLUSTERED INDEX IX_TimeTracking_StartTime ON TimeTracking(StartTime);
 
 -- AuditLog indexes
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_AuditLog_UserID_CreatedDate')
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_AuditLog_UserID_CreatedDate' AND object_id = OBJECT_ID('AuditLog'))
     CREATE NONCLUSTERED INDEX IX_AuditLog_UserID_CreatedDate ON AuditLog(UserID, CreatedDate);
 
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_AuditLog_EntityType_EntityID')
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_AuditLog_EntityType_EntityID' AND object_id = OBJECT_ID('AuditLog'))
     CREATE NONCLUSTERED INDEX IX_AuditLog_EntityType_EntityID ON AuditLog(EntityType, EntityID);
 
 PRINT '✅ All performance indexes created';
+GO
 
+---
 -- ============================================================================
 -- INSERT DEFAULT DATA
 -- ============================================================================
@@ -362,7 +365,7 @@ BEGIN
     INSERT INTO Users (Username, PasswordHash, Email, FirstName, LastName, Role, Department, IsActive)
     VALUES (
         'admin',
-        '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewLZ.9s5w8nTUOcG',
+        '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewLZ.9s5w8nTUOcG', -- Hashed 'admin123'
         'admin@denso.com',
         'System',
         'Administrator',
@@ -372,6 +375,7 @@ BEGIN
     );
     PRINT '✅ Default admin user created (username: admin, password: admin123)';
 END
+GO
 
 -- Insert System Settings
 IF NOT EXISTS (SELECT * FROM Settings WHERE SettingKey = 'app_version')
@@ -389,10 +393,12 @@ BEGIN
     
     PRINT '✅ System settings inserted';
 END
+GO
 
--- Insert Sample Project (if no projects exist)
+-- Insert Sample Project (if no projects exist) and associated tasks
 IF NOT EXISTS (SELECT * FROM Projects WHERE ProjectName = 'DENSO Project Manager Setup')
 BEGIN
+    -- Declare AdminUserID specific to this batch
     DECLARE @AdminUserID INT = (SELECT UserID FROM Users WHERE Username = 'admin');
     
     INSERT INTO Projects (ProjectName, Description, StartDate, EndDate, Status, Priority, Budget, ClientName, CreatedBy, Progress)
@@ -422,10 +428,12 @@ BEGIN
     
     PRINT '✅ Sample project and tasks created';
 END
+GO
 
 -- Insert sample notification
 IF NOT EXISTS (SELECT * FROM Notifications WHERE Title = 'Welcome to DENSO Project Manager Pro')
 BEGIN
+    -- Declare AdminUserID specific to this batch
     DECLARE @AdminUserID INT = (SELECT UserID FROM Users WHERE Username = 'admin');
     
     INSERT INTO Notifications (UserID, Type, Title, Message, Priority)
@@ -439,7 +447,9 @@ BEGIN
     
     PRINT '✅ Welcome notification created';
 END
+GO
 
+---
 -- ============================================================================
 -- UPDATE STATISTICS FOR OPTIMAL PERFORMANCE
 -- ============================================================================
@@ -457,7 +467,9 @@ UPDATE STATISTICS AuditLog;
 UPDATE STATISTICS Settings;
 
 PRINT '✅ Statistics updated';
+GO
 
+---
 -- ============================================================================
 -- CREATE VIEWS FOR COMMON QUERIES
 -- ============================================================================
@@ -490,6 +502,7 @@ BEGIN
     ');
     PRINT '✅ vw_ProjectSummary view created';
 END
+GO
 
 -- Task Summary View
 IF NOT EXISTS (SELECT * FROM sys.views WHERE name = 'vw_TaskSummary')
@@ -523,6 +536,7 @@ BEGIN
     ');
     PRINT '✅ vw_TaskSummary view created';
 END
+GO
 
 -- User Activity View
 IF NOT EXISTS (SELECT * FROM sys.views WHERE name = 'vw_UserActivity')
@@ -546,7 +560,9 @@ BEGIN
     ');
     PRINT '✅ vw_UserActivity view created';
 END
+GO
 
+---
 -- ============================================================================
 -- COMPLETION MESSAGE
 -- ============================================================================
