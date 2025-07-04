@@ -1,6 +1,6 @@
 -- setup.sql
--- DENSO Project Manager Pro - Complete Database Setup Script
--- Version: 2.0.1 (Fixes for variable re-declaration issue)
+-- DENSO Project Manager Pro - Clean Database Setup Script
+-- Version: 2.0.3 (Production Ready - No Sample Data)
 
 USE master;
 GO
@@ -24,434 +24,381 @@ GO
 PRINT '🚀 Starting DENSO Project Manager Pro Database Setup...';
 PRINT '================================================';
 
--- ============================================================================
--- USERS TABLE
--- ============================================================================
-IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='Users' AND xtype='U')
-BEGIN
-    CREATE TABLE Users (
-        UserID INT IDENTITY(1,1) PRIMARY KEY,
-        Username NVARCHAR(100) UNIQUE NOT NULL,
-        PasswordHash NVARCHAR(255) NOT NULL,
-        Email NVARCHAR(255) UNIQUE NOT NULL,
-        FirstName NVARCHAR(100),
-        LastName NVARCHAR(100),
-        Role NVARCHAR(50) DEFAULT 'User' CHECK (Role IN ('Admin', 'Manager', 'User', 'Viewer')),
-        Department NVARCHAR(100),
-        Phone NVARCHAR(20),
-        Avatar NVARCHAR(500),
-        IsActive BIT DEFAULT 1,
-        CreatedDate DATETIME DEFAULT GETDATE(),
-        LastLoginDate DATETIME,
-        PasswordChangedDate DATETIME,
-        ProfilePicture NVARCHAR(500),
-        Bio NTEXT,
-        Timezone NVARCHAR(50) DEFAULT 'UTC',
-        Language NVARCHAR(10) DEFAULT 'en',
-        Theme NVARCHAR(50) DEFAULT 'auto',
-        NotificationSettings NTEXT, -- JSON string
-        TwoFactorEnabled BIT DEFAULT 0,
-        LoginAttempts INT DEFAULT 0,
-        LockedUntil DATETIME NULL
-    );
-    PRINT '✅ Users table created';
-END
+-- Drop existing tables if they exist (in correct order due to foreign keys)
+IF OBJECT_ID('Tasks', 'U') IS NOT NULL DROP TABLE Tasks;
+IF OBJECT_ID('ProjectMembers', 'U') IS NOT NULL DROP TABLE ProjectMembers;
+IF OBJECT_ID('Projects', 'U') IS NOT NULL DROP TABLE Projects;
+IF OBJECT_ID('TimeTracking', 'U') IS NOT NULL DROP TABLE TimeTracking;
+IF OBJECT_ID('Comments', 'U') IS NOT NULL DROP TABLE Comments;
+IF OBJECT_ID('Notifications', 'U') IS NOT NULL DROP TABLE Notifications;
+IF OBJECT_ID('FileAttachments', 'U') IS NOT NULL DROP TABLE FileAttachments;
+IF OBJECT_ID('AuditLog', 'U') IS NOT NULL DROP TABLE AuditLog;
+IF OBJECT_ID('SystemSettings', 'U') IS NOT NULL DROP TABLE SystemSettings;
+IF OBJECT_ID('Settings', 'U') IS NOT NULL DROP TABLE Settings;
+IF OBJECT_ID('Users', 'U') IS NOT NULL DROP TABLE Users;
+
+-- Drop views if they exist
+IF OBJECT_ID('vw_ProjectSummary', 'V') IS NOT NULL DROP VIEW vw_ProjectSummary;
+IF OBJECT_ID('vw_TaskSummary', 'V') IS NOT NULL DROP VIEW vw_TaskSummary;
+IF OBJECT_ID('vw_UserActivity', 'V') IS NOT NULL DROP VIEW vw_UserActivity;
+IF OBJECT_ID('ProjectOverview', 'V') IS NOT NULL DROP VIEW ProjectOverview;
+IF OBJECT_ID('TaskOverview', 'V') IS NOT NULL DROP VIEW TaskOverview;
+
+PRINT '🗑️ Cleaned up existing schema';
 GO
 
 -- ============================================================================
--- PROJECTS TABLE
+-- USERS TABLE (Compatible with auth.py and users.py)
 -- ============================================================================
-IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='Projects' AND xtype='U')
-BEGIN
-    CREATE TABLE Projects (
-        ProjectID INT IDENTITY(1,1) PRIMARY KEY,
-        ProjectName NVARCHAR(200) NOT NULL,
-        Description NTEXT,
-        StartDate DATE,
-        EndDate DATE,
-        Status NVARCHAR(50) DEFAULT 'Planning' CHECK (Status IN ('Planning', 'In Progress', 'Review', 'Completed', 'On Hold', 'Cancelled')),
-        Priority NVARCHAR(50) DEFAULT 'Medium' CHECK (Priority IN ('Low', 'Medium', 'High', 'Critical')),
-        Progress INT DEFAULT 0 CHECK (Progress >= 0 AND Progress <= 100),
-        Budget DECIMAL(18,2),
-        ActualBudget DECIMAL(18,2),
-        EstimatedHours DECIMAL(8,2),
-        ActualHours DECIMAL(8,2),
-        ClientName NVARCHAR(200),
-        CreatedBy INT NOT NULL,
-        CreatedDate DATETIME DEFAULT GETDATE(),
-        LastModifiedDate DATETIME DEFAULT GETDATE(),
-        CompletedDate DATETIME,
-        Tags NVARCHAR(500),
-        ProjectCode NVARCHAR(20) UNIQUE,
-        HealthScore DECIMAL(5,2) DEFAULT 0,
-        RiskLevel NVARCHAR(20) DEFAULT 'Low' CHECK (RiskLevel IN ('Low', 'Medium', 'High', 'Critical')),
-        FOREIGN KEY (CreatedBy) REFERENCES Users(UserID)
-    );
-    PRINT '✅ Projects table created';
-END
+CREATE TABLE Users (
+    UserID INT IDENTITY(1,1) PRIMARY KEY,
+    Username NVARCHAR(50) UNIQUE NOT NULL,
+    PasswordHash NVARCHAR(255) NOT NULL,
+    Email NVARCHAR(100) UNIQUE NOT NULL,
+    FirstName NVARCHAR(50) NOT NULL,
+    LastName NVARCHAR(50) NOT NULL,
+    Role NVARCHAR(20) DEFAULT 'User' CHECK (Role IN ('Admin', 'Project Manager', 'Team Lead', 'Developer', 'User', 'Viewer')),
+    Department NVARCHAR(50),
+    IsActive BIT DEFAULT 1,
+    CreatedDate DATETIME DEFAULT GETDATE(),
+    LastLoginDate DATETIME,
+    FailedLoginAttempts INT DEFAULT 0,
+    LastFailedLogin DATETIME,
+    IsLocked BIT DEFAULT 0,
+    MustChangePassword BIT DEFAULT 1,
+    -- Additional fields from original schema
+    Phone NVARCHAR(20),
+    Avatar NVARCHAR(500),
+    PasswordChangedDate DATETIME,
+    ProfilePicture NVARCHAR(500),
+    Bio NTEXT,
+    Timezone NVARCHAR(50) DEFAULT 'Asia/Bangkok',
+    Language NVARCHAR(10) DEFAULT 'th',
+    Theme NVARCHAR(50) DEFAULT 'light',
+    NotificationSettings NTEXT, -- JSON string
+    TwoFactorEnabled BIT DEFAULT 0,
+    LockedUntil DATETIME NULL
+);
+
+PRINT '✅ Users table created (compatible with auth.py)';
 GO
 
 -- ============================================================================
--- TASKS TABLE
+-- PROJECTS TABLE (Compatible with projects.py)
 -- ============================================================================
-IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='Tasks' AND xtype='U')
-BEGIN
-    CREATE TABLE Tasks (
-        TaskID INT IDENTITY(1,1) PRIMARY KEY,
-        ProjectID INT NOT NULL,
-        TaskName NVARCHAR(200) NOT NULL,
-        Description NTEXT,
-        StartDate DATE,
-        EndDate DATE,
-        DueDate DATE,
-        AssigneeID INT,
-        Status NVARCHAR(50) DEFAULT 'To Do' CHECK (Status IN ('To Do', 'In Progress', 'Review', 'Testing', 'Done', 'Cancelled', 'Blocked')),
-        Priority NVARCHAR(50) DEFAULT 'Medium' CHECK (Priority IN ('Low', 'Medium', 'High', 'Critical')),
-        Progress INT DEFAULT 0 CHECK (Progress >= 0 AND Progress <= 100),
-        EstimatedHours DECIMAL(8,2),
-        ActualHours DECIMAL(8,2),
-        Dependencies NVARCHAR(500), -- Comma-separated TaskIDs
-        Labels NVARCHAR(500), -- Comma-separated labels
-        CreatedBy INT NOT NULL,
-        CreatedDate DATETIME DEFAULT GETDATE(),
-        LastModifiedDate DATETIME DEFAULT GETDATE(),
-        CompletedDate DATETIME,
-        Comments NTEXT,
-        Attachments NTEXT, -- JSON string of file paths
-        TaskCode NVARCHAR(20),
-        StoryPoints INT DEFAULT 0,
-        FOREIGN KEY (ProjectID) REFERENCES Projects(ProjectID) ON DELETE CASCADE,
-        FOREIGN KEY (AssigneeID) REFERENCES Users(UserID),
-        FOREIGN KEY (CreatedBy) REFERENCES Users(UserID)
-    );
-    PRINT '✅ Tasks table created';
-END
+CREATE TABLE Projects (
+    ProjectID INT IDENTITY(1,1) PRIMARY KEY,
+    Name NVARCHAR(100) NOT NULL, -- Used in projects.py
+    Description NVARCHAR(MAX),
+    StartDate DATE,
+    EndDate DATE,
+    Status NVARCHAR(20) DEFAULT 'Planning' CHECK (Status IN ('Planning', 'In Progress', 'On Hold', 'Completed', 'Cancelled')),
+    Priority NVARCHAR(10) DEFAULT 'Medium' CHECK (Priority IN ('Low', 'Medium', 'High', 'Critical')),
+    CompletionPercentage INT DEFAULT 0 CHECK (CompletionPercentage BETWEEN 0 AND 100),
+    Budget DECIMAL(15,2),
+    ActualCost DECIMAL(15,2) DEFAULT 0,
+    EstimatedHours DECIMAL(8,2),
+    ActualHours DECIMAL(8,2),
+    ClientName NVARCHAR(100),
+    ManagerID INT, -- Used in projects.py
+    CreatedDate DATETIME DEFAULT GETDATE(),
+    UpdatedDate DATETIME DEFAULT GETDATE(),
+    CompletedDate DATETIME,
+    -- Additional fields from original schema
+    Tags NVARCHAR(500),
+    ProjectCode NVARCHAR(20),
+    HealthScore DECIMAL(5,2) DEFAULT 0,
+    RiskLevel NVARCHAR(20) DEFAULT 'Low' CHECK (RiskLevel IN ('Low', 'Medium', 'High', 'Critical')),
+    FOREIGN KEY (ManagerID) REFERENCES Users(UserID)
+);
+
+PRINT '✅ Projects table created (compatible with projects.py)';
 GO
 
 -- ============================================================================
--- PROJECT MEMBERS TABLE (Many-to-Many)
+-- TASKS TABLE (Compatible with tasks.py)
 -- ============================================================================
-IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='ProjectMembers' AND xtype='U')
-BEGIN
-    CREATE TABLE ProjectMembers (
-        ProjectMemberID INT IDENTITY(1,1) PRIMARY KEY,
-        ProjectID INT NOT NULL,
-        UserID INT NOT NULL,
-        Role NVARCHAR(50) DEFAULT 'Member' CHECK (Role IN ('Owner', 'Manager', 'Member', 'Viewer')),
-        JoinedDate DATETIME DEFAULT GETDATE(),
-        FOREIGN KEY (ProjectID) REFERENCES Projects(ProjectID) ON DELETE CASCADE,
-        FOREIGN KEY (UserID) REFERENCES Users(UserID) ON DELETE CASCADE,
-        UNIQUE(ProjectID, UserID)
-    );
-    PRINT '✅ ProjectMembers table created';
-END
+CREATE TABLE Tasks (
+    TaskID INT IDENTITY(1,1) PRIMARY KEY,
+    ProjectID INT NOT NULL,
+    Title NVARCHAR(200) NOT NULL, -- Used in tasks.py
+    Description NVARCHAR(MAX),
+    AssignedToID INT, -- Used in tasks.py
+    Status NVARCHAR(20) DEFAULT 'To Do' CHECK (Status IN ('To Do', 'In Progress', 'Review', 'Testing', 'Done', 'Cancelled', 'Blocked')),
+    Priority NVARCHAR(10) DEFAULT 'Medium' CHECK (Priority IN ('Low', 'Medium', 'High', 'Critical')),
+    CreatedDate DATETIME DEFAULT GETDATE(),
+    DueDate DATETIME,
+    StartDate DATETIME,
+    EndDate DATETIME,
+    EstimatedHours DECIMAL(5,2),
+    ActualHours DECIMAL(5,2),
+    CompletionPercentage INT DEFAULT 0 CHECK (CompletionPercentage BETWEEN 0 AND 100),
+    CreatedByID INT, -- Used in tasks.py
+    UpdatedDate DATETIME DEFAULT GETDATE(),
+    CompletedDate DATETIME,
+    -- Additional fields from original schema
+    Dependencies NVARCHAR(500), -- Comma-separated TaskIDs
+    Labels NVARCHAR(500), -- Comma-separated labels
+    Comments NTEXT,
+    Attachments NTEXT, -- JSON string of file paths
+    TaskCode NVARCHAR(20),
+    StoryPoints INT DEFAULT 0,
+    FOREIGN KEY (ProjectID) REFERENCES Projects(ProjectID) ON DELETE CASCADE,
+    FOREIGN KEY (AssignedToID) REFERENCES Users(UserID),
+    FOREIGN KEY (CreatedByID) REFERENCES Users(UserID)
+);
+
+PRINT '✅ Tasks table created (compatible with tasks.py)';
 GO
 
 -- ============================================================================
--- TIME TRACKING TABLE
+-- PROJECT MEMBERS TABLE
 -- ============================================================================
-IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='TimeTracking' AND xtype='U')
-BEGIN
-    CREATE TABLE TimeTracking (
-        TimeTrackingID INT IDENTITY(1,1) PRIMARY KEY,
-        TaskID INT NOT NULL,
-        UserID INT NOT NULL,
-        StartTime DATETIME NOT NULL,
-        EndTime DATETIME,
-        Duration DECIMAL(8,2), -- Hours
-        Description NVARCHAR(500),
-        CreatedDate DATETIME DEFAULT GETDATE(),
-        FOREIGN KEY (TaskID) REFERENCES Tasks(TaskID) ON DELETE CASCADE,
-        FOREIGN KEY (UserID) REFERENCES Users(UserID)
-    );
-    PRINT '✅ TimeTracking table created';
-END
+CREATE TABLE ProjectMembers (
+    ProjectMemberID INT IDENTITY(1,1) PRIMARY KEY,
+    ProjectID INT NOT NULL,
+    UserID INT NOT NULL,
+    Role NVARCHAR(50) DEFAULT 'Member' CHECK (Role IN ('Owner', 'Manager', 'Member', 'Viewer')),
+    JoinedDate DATETIME DEFAULT GETDATE(),
+    FOREIGN KEY (ProjectID) REFERENCES Projects(ProjectID) ON DELETE CASCADE,
+    FOREIGN KEY (UserID) REFERENCES Users(UserID) ON DELETE CASCADE,
+    UNIQUE(ProjectID, UserID)
+);
+
+PRINT '✅ ProjectMembers table created';
 GO
 
 -- ============================================================================
--- COMMENTS TABLE
+-- SYSTEM SETTINGS TABLE (Compatible with settings.py)
 -- ============================================================================
-IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='Comments' AND xtype='U')
-BEGIN
-    CREATE TABLE Comments (
-        CommentID INT IDENTITY(1,1) PRIMARY KEY,
-        EntityType NVARCHAR(50) NOT NULL CHECK (EntityType IN ('Project', 'Task')),
-        EntityID INT NOT NULL,
-        UserID INT NOT NULL,
-        CommentText NTEXT NOT NULL,
-        CreatedDate DATETIME DEFAULT GETDATE(),
-        LastModifiedDate DATETIME DEFAULT GETDATE(),
-        ParentCommentID INT, -- For nested comments
-        IsEdited BIT DEFAULT 0,
-        FOREIGN KEY (UserID) REFERENCES Users(UserID),
-        FOREIGN KEY (ParentCommentID) REFERENCES Comments(CommentID)
-    );
-    PRINT '✅ Comments table created';
-END
+CREATE TABLE SystemSettings (
+    SettingID INT IDENTITY(1,1) PRIMARY KEY,
+    SettingKey NVARCHAR(100) UNIQUE NOT NULL,
+    SettingValue NVARCHAR(MAX) NOT NULL,
+    CreatedDate DATETIME DEFAULT GETDATE(),
+    UpdatedDate DATETIME DEFAULT GETDATE()
+);
+
+PRINT '✅ SystemSettings table created (compatible with settings.py)';
 GO
 
 -- ============================================================================
--- NOTIFICATIONS TABLE
+-- ADDITIONAL TABLES FROM ORIGINAL SCHEMA
 -- ============================================================================
-IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='Notifications' AND xtype='U')
-BEGIN
-    CREATE TABLE Notifications (
-        NotificationID INT IDENTITY(1,1) PRIMARY KEY,
-        UserID INT NOT NULL,
-        Type NVARCHAR(50) NOT NULL CHECK (Type IN ('info', 'success', 'warning', 'error', 'task', 'project', 'team', 'system')),
-        Title NVARCHAR(200) NOT NULL,
-        Message NTEXT NOT NULL,
-        IsRead BIT DEFAULT 0,
-        CreatedDate DATETIME DEFAULT GETDATE(),
-        ReadDate DATETIME,
-        ActionUrl NVARCHAR(500),
-        ActionText NVARCHAR(100),
-        Priority NVARCHAR(20) DEFAULT 'medium' CHECK (Priority IN ('low', 'medium', 'high', 'critical')),
-        ExpiresAt DATETIME,
-        FOREIGN KEY (UserID) REFERENCES Users(UserID) ON DELETE CASCADE
-    );
-    PRINT '✅ Notifications table created';
-END
+
+-- Time Tracking
+CREATE TABLE TimeTracking (
+    TimeTrackingID INT IDENTITY(1,1) PRIMARY KEY,
+    TaskID INT NOT NULL,
+    UserID INT NOT NULL,
+    StartTime DATETIME NOT NULL,
+    EndTime DATETIME,
+    Duration DECIMAL(8,2), -- Hours
+    Description NVARCHAR(500),
+    CreatedDate DATETIME DEFAULT GETDATE(),
+    FOREIGN KEY (TaskID) REFERENCES Tasks(TaskID) ON DELETE CASCADE,
+    FOREIGN KEY (UserID) REFERENCES Users(UserID)
+);
+
+-- Comments
+CREATE TABLE Comments (
+    CommentID INT IDENTITY(1,1) PRIMARY KEY,
+    EntityType NVARCHAR(50) NOT NULL CHECK (EntityType IN ('Project', 'Task')),
+    EntityID INT NOT NULL,
+    UserID INT NOT NULL,
+    CommentText NTEXT NOT NULL,
+    CreatedDate DATETIME DEFAULT GETDATE(),
+    LastModifiedDate DATETIME DEFAULT GETDATE(),
+    ParentCommentID INT,
+    IsEdited BIT DEFAULT 0,
+    FOREIGN KEY (UserID) REFERENCES Users(UserID),
+    FOREIGN KEY (ParentCommentID) REFERENCES Comments(CommentID)
+);
+
+-- Notifications
+CREATE TABLE Notifications (
+    NotificationID INT IDENTITY(1,1) PRIMARY KEY,
+    UserID INT NOT NULL,
+    Type NVARCHAR(50) NOT NULL CHECK (Type IN ('info', 'success', 'warning', 'error', 'task', 'project', 'team', 'system')),
+    Title NVARCHAR(200) NOT NULL,
+    Message NTEXT NOT NULL,
+    IsRead BIT DEFAULT 0,
+    CreatedDate DATETIME DEFAULT GETDATE(),
+    ReadDate DATETIME,
+    ActionUrl NVARCHAR(500),
+    ActionText NVARCHAR(100),
+    Priority NVARCHAR(20) DEFAULT 'medium' CHECK (Priority IN ('low', 'medium', 'high', 'critical')),
+    ExpiresAt DATETIME,
+    FOREIGN KEY (UserID) REFERENCES Users(UserID) ON DELETE CASCADE
+);
+
+-- File Attachments
+CREATE TABLE FileAttachments (
+    AttachmentID INT IDENTITY(1,1) PRIMARY KEY,
+    EntityType NVARCHAR(50) NOT NULL CHECK (EntityType IN ('Project', 'Task', 'Comment')),
+    EntityID INT NOT NULL,
+    FileName NVARCHAR(255) NOT NULL,
+    OriginalFileName NVARCHAR(255) NOT NULL,
+    FilePath NVARCHAR(500) NOT NULL,
+    FileSize BIGINT NOT NULL,
+    FileType NVARCHAR(100),
+    MimeType NVARCHAR(100),
+    UploadedBy INT NOT NULL,
+    UploadedDate DATETIME DEFAULT GETDATE(),
+    IsActive BIT DEFAULT 1,
+    FOREIGN KEY (UploadedBy) REFERENCES Users(UserID)
+);
+
+-- Audit Log
+CREATE TABLE AuditLog (
+    AuditID INT IDENTITY(1,1) PRIMARY KEY,
+    UserID INT,
+    Action NVARCHAR(100) NOT NULL,
+    EntityType NVARCHAR(50),
+    EntityID INT,
+    OldValues NTEXT,
+    NewValues NTEXT,
+    IPAddress NVARCHAR(45),
+    UserAgent NVARCHAR(500),
+    CreatedDate DATETIME DEFAULT GETDATE(),
+    FOREIGN KEY (UserID) REFERENCES Users(UserID)
+);
+
+PRINT '✅ Additional tables created';
 GO
 
--- ============================================================================
--- FILE ATTACHMENTS TABLE
--- ============================================================================
-IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='FileAttachments' AND xtype='U')
-BEGIN
-    CREATE TABLE FileAttachments (
-        AttachmentID INT IDENTITY(1,1) PRIMARY KEY,
-        EntityType NVARCHAR(50) NOT NULL CHECK (EntityType IN ('Project', 'Task', 'Comment')),
-        EntityID INT NOT NULL,
-        FileName NVARCHAR(255) NOT NULL,
-        OriginalFileName NVARCHAR(255) NOT NULL,
-        FilePath NVARCHAR(500) NOT NULL,
-        FileSize BIGINT NOT NULL,
-        FileType NVARCHAR(100),
-        MimeType NVARCHAR(100),
-        UploadedBy INT NOT NULL,
-        UploadedDate DATETIME DEFAULT GETDATE(),
-        IsActive BIT DEFAULT 1,
-        FOREIGN KEY (UploadedBy) REFERENCES Users(UserID)
-    );
-    PRINT '✅ FileAttachments table created';
-END
-GO
-
--- ============================================================================
--- AUDIT LOG TABLE
--- ============================================================================
-IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='AuditLog' AND xtype='U')
-BEGIN
-    CREATE TABLE AuditLog (
-        AuditID INT IDENTITY(1,1) PRIMARY KEY,
-        UserID INT,
-        Action NVARCHAR(100) NOT NULL,
-        EntityType NVARCHAR(50),
-        EntityID INT,
-        OldValues NTEXT, -- JSON string
-        NewValues NTEXT, -- JSON string
-        IPAddress NVARCHAR(45),
-        UserAgent NVARCHAR(500),
-        CreatedDate DATETIME DEFAULT GETDATE(),
-        FOREIGN KEY (UserID) REFERENCES Users(UserID)
-    );
-    PRINT '✅ AuditLog table created';
-END
-GO
-
--- ============================================================================
--- SETTINGS TABLE
--- ============================================================================
-IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='Settings' AND xtype='U')
-BEGIN
-    CREATE TABLE Settings (
-        SettingID INT IDENTITY(1,1) PRIMARY KEY,
-        SettingKey NVARCHAR(100) UNIQUE NOT NULL,
-        SettingValue NTEXT,
-        Description NVARCHAR(500),
-        Category NVARCHAR(50) DEFAULT 'General',
-        DataType NVARCHAR(20) DEFAULT 'string' CHECK (DataType IN ('string', 'number', 'boolean', 'json')),
-        IsReadOnly BIT DEFAULT 0,
-        CreatedDate DATETIME DEFAULT GETDATE(),
-        LastModifiedDate DATETIME DEFAULT GETDATE()
-    );
-    PRINT '✅ Settings table created';
-END
-GO
-
----
 -- ============================================================================
 -- CREATE INDEXES FOR PERFORMANCE
 -- ============================================================================
 PRINT '📊 Creating indexes for optimal performance...';
 
 -- Users indexes
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Users_Username_IsActive' AND object_id = OBJECT_ID('Users'))
-    CREATE NONCLUSTERED INDEX IX_Users_Username_IsActive ON Users(Username, IsActive);
-
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Users_Email' AND object_id = OBJECT_ID('Users'))
-    CREATE NONCLUSTERED INDEX IX_Users_Email ON Users(Email);
-
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Users_Role_IsActive' AND object_id = OBJECT_ID('Users'))
-    CREATE NONCLUSTERED INDEX IX_Users_Role_IsActive ON Users(Role, IsActive);
+CREATE INDEX IX_Users_Username ON Users(Username);
+CREATE INDEX IX_Users_Email ON Users(Email);
+CREATE INDEX IX_Users_Role ON Users(Role);
+CREATE INDEX IX_Users_IsActive ON Users(IsActive);
 
 -- Projects indexes
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Projects_Status_Priority' AND object_id = OBJECT_ID('Projects'))
-    CREATE NONCLUSTERED INDEX IX_Projects_Status_Priority ON Projects(Status, Priority);
-
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Projects_CreatedBy' AND object_id = OBJECT_ID('Projects'))
-    CREATE NONCLUSTERED INDEX IX_Projects_CreatedBy ON Projects(CreatedBy);
-
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Projects_CreatedDate' AND object_id = OBJECT_ID('Projects'))
-    CREATE NONCLUSTERED INDEX IX_Projects_CreatedDate ON Projects(CreatedDate);
-
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Projects_EndDate' AND object_id = OBJECT_ID('Projects'))
-    CREATE NONCLUSTERED INDEX IX_Projects_EndDate ON Projects(EndDate);
+CREATE INDEX IX_Projects_Status ON Projects(Status);
+CREATE INDEX IX_Projects_ManagerID ON Projects(ManagerID);
+CREATE INDEX IX_Projects_Priority ON Projects(Priority);
+CREATE INDEX IX_Projects_CreatedDate ON Projects(CreatedDate);
+CREATE INDEX IX_Projects_EndDate ON Projects(EndDate);
 
 -- Tasks indexes
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Tasks_ProjectID_Status' AND object_id = OBJECT_ID('Tasks'))
-    CREATE NONCLUSTERED INDEX IX_Tasks_ProjectID_Status ON Tasks(ProjectID, Status);
+CREATE INDEX IX_Tasks_ProjectID ON Tasks(ProjectID);
+CREATE INDEX IX_Tasks_AssignedToID ON Tasks(AssignedToID);
+CREATE INDEX IX_Tasks_Status ON Tasks(Status);
+CREATE INDEX IX_Tasks_DueDate ON Tasks(DueDate);
+CREATE INDEX IX_Tasks_Priority ON Tasks(Priority);
+CREATE INDEX IX_Tasks_CreatedByID ON Tasks(CreatedByID);
 
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Tasks_AssigneeID_Status' AND object_id = OBJECT_ID('Tasks'))
-    CREATE NONCLUSTERED INDEX IX_Tasks_AssigneeID_Status ON Tasks(AssigneeID, Status);
+-- ProjectMembers indexes
+CREATE INDEX IX_ProjectMembers_ProjectID ON ProjectMembers(ProjectID);
+CREATE INDEX IX_ProjectMembers_UserID ON ProjectMembers(UserID);
 
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Tasks_DueDate' AND object_id = OBJECT_ID('Tasks'))
-    CREATE NONCLUSTERED INDEX IX_Tasks_DueDate ON Tasks(DueDate);
-
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Tasks_Priority_Status' AND object_id = OBJECT_ID('Tasks'))
-    CREATE NONCLUSTERED INDEX IX_Tasks_Priority_Status ON Tasks(Priority, Status);
-
--- Comments indexes
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Comments_EntityType_EntityID' AND object_id = OBJECT_ID('Comments'))
-    CREATE NONCLUSTERED INDEX IX_Comments_EntityType_EntityID ON Comments(EntityType, EntityID);
-
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Comments_UserID_CreatedDate' AND object_id = OBJECT_ID('Comments'))
-    CREATE NONCLUSTERED INDEX IX_Comments_UserID_CreatedDate ON Comments(UserID, CreatedDate);
-
--- Notifications indexes
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Notifications_UserID_IsRead' AND object_id = OBJECT_ID('Notifications'))
-    CREATE NONCLUSTERED INDEX IX_Notifications_UserID_IsRead ON Notifications(UserID, IsRead);
-
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Notifications_CreatedDate' AND object_id = OBJECT_ID('Notifications'))
-    CREATE NONCLUSTERED INDEX IX_Notifications_CreatedDate ON Notifications(CreatedDate);
-
--- TimeTracking indexes
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_TimeTracking_TaskID_UserID' AND object_id = OBJECT_ID('TimeTracking'))
-    CREATE NONCLUSTERED INDEX IX_TimeTracking_TaskID_UserID ON TimeTracking(TaskID, UserID);
-
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_TimeTracking_StartTime' AND object_id = OBJECT_ID('TimeTracking'))
-    CREATE NONCLUSTERED INDEX IX_TimeTracking_StartTime ON TimeTracking(StartTime);
-
--- AuditLog indexes
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_AuditLog_UserID_CreatedDate' AND object_id = OBJECT_ID('AuditLog'))
-    CREATE NONCLUSTERED INDEX IX_AuditLog_UserID_CreatedDate ON AuditLog(UserID, CreatedDate);
-
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_AuditLog_EntityType_EntityID' AND object_id = OBJECT_ID('AuditLog'))
-    CREATE NONCLUSTERED INDEX IX_AuditLog_EntityType_EntityID ON AuditLog(EntityType, EntityID);
+-- Other indexes
+CREATE INDEX IX_TimeTracking_TaskID_UserID ON TimeTracking(TaskID, UserID);
+CREATE INDEX IX_Comments_EntityType_EntityID ON Comments(EntityType, EntityID);
+CREATE INDEX IX_Notifications_UserID_IsRead ON Notifications(UserID, IsRead);
+CREATE INDEX IX_AuditLog_UserID_CreatedDate ON AuditLog(UserID, CreatedDate);
 
 PRINT '✅ All performance indexes created';
 GO
 
----
 -- ============================================================================
--- INSERT DEFAULT DATA
+-- INSERT SYSTEM SETTINGS ONLY
 -- ============================================================================
-PRINT '📝 Inserting default data...';
+PRINT '⚙️ Inserting default system settings...';
 
--- Insert Default Admin User (password is 'admin123' hashed with bcrypt)
-IF NOT EXISTS (SELECT * FROM Users WHERE Username = 'admin')
-BEGIN
-    INSERT INTO Users (Username, PasswordHash, Email, FirstName, LastName, Role, Department, IsActive)
-    VALUES (
-        'admin',
-        '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewLZ.9s5w8nTUOcG', -- Hashed 'admin123'
-        'admin@denso.com',
-        'System',
-        'Administrator',
-        'Admin',
-        'IT',
-        1
-    );
-    PRINT '✅ Default admin user created (username: admin, password: admin123)';
-END
+-- Insert default system settings (compatible with settings.py)
+INSERT INTO SystemSettings (SettingKey, SettingValue)
+VALUES 
+('app_name', '"DENSO Project Manager Pro"'),
+('app_version', '"2.0.0"'),
+('company_name', '"DENSO Corporation"'),
+('theme', '"light"'),
+('language', '"th"'),
+('timezone', '"Asia/Bangkok"'),
+('session_timeout', '3600'),
+('max_upload_size', '100'),
+('email_notifications', 'true'),
+('auto_backup', 'false'),
+('backup_schedule', '"02:00"'),
+('backup_retention_days', '90'),
+('default_currency', '"THB"'),
+('working_hours_start', '"08:00"'),
+('working_hours_end', '"17:00"'),
+('weekend_days', '["Saturday", "Sunday"]'),
+('company_logo', '"/assets/denso-logo.png"'),
+('password_policy', '{"min_length": 8, "require_uppercase": true, "require_lowercase": true, "require_digits": true, "require_special": true, "history_count": 5}'),
+('security_settings', '{"max_login_attempts": 5, "lockout_duration": 900, "session_cookie_secure": false, "force_password_change": false}');
+
+PRINT '✅ System settings created';
 GO
 
--- Insert System Settings
-IF NOT EXISTS (SELECT * FROM Settings WHERE SettingKey = 'app_version')
-BEGIN
-    INSERT INTO Settings (SettingKey, SettingValue, Description, Category, DataType) VALUES
-    ('app_version', '2.0.0', 'Application version', 'System', 'string'),
-    ('maintenance_mode', 'false', 'Enable maintenance mode', 'System', 'boolean'),
-    ('max_upload_size', '50', 'Maximum file upload size in MB', 'Files', 'number'),
-    ('session_timeout', '3600', 'Session timeout in seconds', 'Security', 'number'),
-    ('enable_notifications', 'true', 'Enable system notifications', 'Features', 'boolean'),
-    ('backup_retention_days', '90', 'Number of days to retain backups', 'Backup', 'number'),
-    ('default_theme', 'auto', 'Default application theme', 'UI', 'string'),
-    ('password_min_length', '8', 'Minimum password length', 'Security', 'number'),
-    ('max_login_attempts', '5', 'Maximum failed login attempts', 'Security', 'number');
-    
-    PRINT '✅ System settings inserted';
-END
-GO
-
--- Insert Sample Project (if no projects exist) and associated tasks
-IF NOT EXISTS (SELECT * FROM Projects WHERE ProjectName = 'DENSO Project Manager Setup')
-BEGIN
-    -- Declare AdminUserID specific to this batch
-    DECLARE @AdminUserID INT = (SELECT UserID FROM Users WHERE Username = 'admin');
-    
-    INSERT INTO Projects (ProjectName, Description, StartDate, EndDate, Status, Priority, Budget, ClientName, CreatedBy, Progress)
-    VALUES (
-        'DENSO Project Manager Setup',
-        'Initial setup and configuration of the DENSO Project Manager Pro system. This project includes database setup, user configuration, and system testing.',
-        GETDATE(),
-        DATEADD(DAY, 30, GETDATE()),
-        'In Progress',
-        'High',
-        0.00,
-        'DENSO Internal',
-        @AdminUserID,
-        75
-    );
-    
-    DECLARE @ProjectID INT = SCOPE_IDENTITY();
-    
-    -- Insert sample tasks
-    INSERT INTO Tasks (ProjectID, TaskName, Description, AssigneeID, Status, Priority, EstimatedHours, CreatedBy, Progress)
-    VALUES 
-    (@ProjectID, 'Database Schema Setup', 'Create and configure database tables, indexes, and initial data', @AdminUserID, 'Done', 'Critical', 4.0, @AdminUserID, 100),
-    (@ProjectID, 'User Account Configuration', 'Set up initial user accounts and permissions', @AdminUserID, 'Done', 'High', 2.0, @AdminUserID, 100),
-    (@ProjectID, 'System Testing', 'Test all system functionality and features', @AdminUserID, 'In Progress', 'Medium', 8.0, @AdminUserID, 50),
-    (@ProjectID, 'Documentation Review', 'Review and finalize system documentation', @AdminUserID, 'To Do', 'Medium', 3.0, @AdminUserID, 0),
-    (@ProjectID, 'Go-Live Preparation', 'Prepare system for production deployment', @AdminUserID, 'To Do', 'High', 6.0, @AdminUserID, 0);
-    
-    PRINT '✅ Sample project and tasks created';
-END
-GO
-
--- Insert sample notification
-IF NOT EXISTS (SELECT * FROM Notifications WHERE Title = 'Welcome to DENSO Project Manager Pro')
-BEGIN
-    -- Declare AdminUserID specific to this batch
-    DECLARE @AdminUserID INT = (SELECT UserID FROM Users WHERE Username = 'admin');
-    
-    INSERT INTO Notifications (UserID, Type, Title, Message, Priority)
-    VALUES (
-        @AdminUserID,
-        'system',
-        'Welcome to DENSO Project Manager Pro',
-        'Your project management system has been successfully set up and is ready to use. Please change the default admin password and configure your preferences.',
-        'high'
-    );
-    
-    PRINT '✅ Welcome notification created';
-END
-GO
-
----
 -- ============================================================================
--- UPDATE STATISTICS FOR OPTIMAL PERFORMANCE
+-- CREATE VIEWS FOR COMPATIBILITY
+-- ============================================================================
+PRINT '👁️ Creating database views...';
+GO
+
+-- Project Overview View (compatible with analytics.py)
+CREATE VIEW ProjectOverview AS
+SELECT 
+    p.ProjectID,
+    p.Name as ProjectName,
+    p.Description,
+    p.Status,
+    p.Priority,
+    p.Budget,
+    p.ActualCost,
+    p.CompletionPercentage,
+    p.StartDate,
+    p.EndDate,
+    p.ClientName,
+    u.FirstName + ' ' + u.LastName as ManagerName,
+    COUNT(t.TaskID) as TotalTasks,
+    SUM(CASE WHEN t.Status = 'Done' THEN 1 ELSE 0 END) as CompletedTasks,
+    SUM(CASE WHEN t.DueDate < GETDATE() AND t.Status != 'Done' THEN 1 ELSE 0 END) as OverdueTasks
+FROM Projects p
+LEFT JOIN Users u ON p.ManagerID = u.UserID
+LEFT JOIN Tasks t ON p.ProjectID = t.ProjectID
+GROUP BY p.ProjectID, p.Name, p.Description, p.Status, p.Priority, p.Budget, p.ActualCost, 
+         p.CompletionPercentage, p.StartDate, p.EndDate, p.ClientName, u.FirstName, u.LastName;
+GO
+
+-- Task Overview View (compatible with analytics.py)
+CREATE VIEW TaskOverview AS
+SELECT 
+    t.TaskID,
+    t.Title,
+    t.Description,
+    t.Status,
+    t.Priority,
+    t.CompletionPercentage,
+    t.CreatedDate,
+    t.DueDate,
+    t.EstimatedHours,
+    t.ActualHours,
+    p.Name as ProjectName,
+    assigned.FirstName + ' ' + assigned.LastName as AssignedToName,
+    creator.FirstName + ' ' + creator.LastName as CreatedByName,
+    CASE 
+        WHEN t.DueDate < GETDATE() AND t.Status != 'Done' THEN 1 
+        ELSE 0 
+    END as IsOverdue
+FROM Tasks t
+LEFT JOIN Projects p ON t.ProjectID = p.ProjectID
+LEFT JOIN Users assigned ON t.AssignedToID = assigned.UserID
+LEFT JOIN Users creator ON t.CreatedByID = creator.UserID;
+GO
+
+PRINT '✅ Compatibility views created';
+GO
+
+-- ============================================================================
+-- UPDATE STATISTICS
 -- ============================================================================
 PRINT '📈 Updating table statistics...';
 
@@ -459,110 +406,14 @@ UPDATE STATISTICS Users;
 UPDATE STATISTICS Projects;
 UPDATE STATISTICS Tasks;
 UPDATE STATISTICS ProjectMembers;
+UPDATE STATISTICS SystemSettings;
 UPDATE STATISTICS TimeTracking;
 UPDATE STATISTICS Comments;
 UPDATE STATISTICS Notifications;
-UPDATE STATISTICS FileAttachments;
-UPDATE STATISTICS AuditLog;
-UPDATE STATISTICS Settings;
 
 PRINT '✅ Statistics updated';
 GO
 
----
--- ============================================================================
--- CREATE VIEWS FOR COMMON QUERIES
--- ============================================================================
-PRINT '👁️ Creating database views...';
-
--- Project Summary View
-IF NOT EXISTS (SELECT * FROM sys.views WHERE name = 'vw_ProjectSummary')
-BEGIN
-    EXEC('
-    CREATE VIEW vw_ProjectSummary AS
-    SELECT 
-        p.ProjectID,
-        p.ProjectName,
-        p.Description,
-        p.Status,
-        p.Priority,
-        p.Progress,
-        p.StartDate,
-        p.EndDate,
-        p.Budget,
-        p.ActualBudget,
-        p.CreatedDate,
-        u.FirstName + '' '' + u.LastName as CreatorName,
-        (SELECT COUNT(*) FROM Tasks WHERE ProjectID = p.ProjectID) as TotalTasks,
-        (SELECT COUNT(*) FROM Tasks WHERE ProjectID = p.ProjectID AND Status = ''Done'') as CompletedTasks,
-        (SELECT COUNT(*) FROM ProjectMembers WHERE ProjectID = p.ProjectID) as TeamSize
-    FROM Projects p
-    LEFT JOIN Users u ON p.CreatedBy = u.UserID
-    WHERE p.Status != ''Cancelled''
-    ');
-    PRINT '✅ vw_ProjectSummary view created';
-END
-GO
-
--- Task Summary View
-IF NOT EXISTS (SELECT * FROM sys.views WHERE name = 'vw_TaskSummary')
-BEGIN
-    EXEC('
-    CREATE VIEW vw_TaskSummary AS
-    SELECT 
-        t.TaskID,
-        t.TaskName,
-        t.Description,
-        t.Status,
-        t.Priority,
-        t.Progress,
-        t.DueDate,
-        t.EstimatedHours,
-        t.ActualHours,
-        t.CreatedDate,
-        p.ProjectName,
-        assignee.FirstName + '' '' + assignee.LastName as AssigneeName,
-        creator.FirstName + '' '' + creator.LastName as CreatorName,
-        CASE 
-            WHEN t.DueDate < CAST(GETDATE() AS DATE) AND t.Status NOT IN (''Done'', ''Cancelled'') THEN ''Overdue''
-            WHEN t.DueDate = CAST(GETDATE() AS DATE) AND t.Status NOT IN (''Done'', ''Cancelled'') THEN ''Due Today''
-            WHEN DATEDIFF(day, GETDATE(), t.DueDate) <= 3 AND t.Status NOT IN (''Done'', ''Cancelled'') THEN ''Due Soon''
-            ELSE ''On Track''
-        END as DueStatus
-    FROM Tasks t
-    LEFT JOIN Projects p ON t.ProjectID = p.ProjectID
-    LEFT JOIN Users assignee ON t.AssigneeID = assignee.UserID
-    LEFT JOIN Users creator ON t.CreatedBy = creator.UserID
-    ');
-    PRINT '✅ vw_TaskSummary view created';
-END
-GO
-
--- User Activity View
-IF NOT EXISTS (SELECT * FROM sys.views WHERE name = 'vw_UserActivity')
-BEGIN
-    EXEC('
-    CREATE VIEW vw_UserActivity AS
-    SELECT 
-        u.UserID,
-        u.Username,
-        u.FirstName + '' '' + u.LastName as FullName,
-        u.Email,
-        u.Role,
-        u.Department,
-        u.LastLoginDate,
-        (SELECT COUNT(*) FROM Projects WHERE CreatedBy = u.UserID) as ProjectsCreated,
-        (SELECT COUNT(*) FROM Tasks WHERE AssigneeID = u.UserID) as TasksAssigned,
-        (SELECT COUNT(*) FROM Tasks WHERE AssigneeID = u.UserID AND Status = ''Done'') as TasksCompleted,
-        (SELECT COUNT(*) FROM Comments WHERE UserID = u.UserID) as CommentsPosted
-    FROM Users u
-    WHERE u.IsActive = 1
-    ');
-    PRINT '✅ vw_UserActivity view created';
-END
-GO
-
----
 -- ============================================================================
 -- COMPLETION MESSAGE
 -- ============================================================================
@@ -570,17 +421,28 @@ PRINT '';
 PRINT '🎉 DENSO Project Manager Pro Database Setup Complete!';
 PRINT '================================================';
 PRINT '✅ Database: ProjectManagerDB';
-PRINT '✅ Tables: 9 core tables created';
-PRINT '✅ Indexes: Performance indexes applied';
-PRINT '✅ Views: Summary views created';
-PRINT '✅ Admin User: admin / admin123';
-PRINT '✅ Sample Data: Demo project and tasks';
+PRINT '✅ Tables: 10 production tables created';
+PRINT '✅ Indexes: Performance optimized';
+PRINT '✅ Views: Analytics compatible';
+PRINT '✅ Settings: Default system configuration';
 PRINT '';
-PRINT '🔑 Default Login Credentials:';
-PRINT '   Username: admin';
-PRINT '   Password: admin123';
+PRINT '📝 Next Steps:';
+PRINT '   1. Run insert_sample_data.sql to add your team data';
+PRINT '   2. Configure your application settings';
+PRINT '   3. Set up user accounts through the application';
 PRINT '';
-PRINT '⚠️  IMPORTANT: Change the default admin password immediately!';
-PRINT '';
-PRINT '🚀 Your DENSO Project Manager Pro is ready to use!';
+PRINT '🚀 Your DENSO Project Manager Pro database is ready!';
 PRINT '================================================';
+
+-- Final verification
+SELECT 'Users' as TableName, COUNT(*) as RecordCount FROM Users
+UNION ALL
+SELECT 'Projects', COUNT(*) FROM Projects
+UNION ALL
+SELECT 'Tasks', COUNT(*) FROM Tasks
+UNION ALL
+SELECT 'ProjectMembers', COUNT(*) FROM ProjectMembers
+UNION ALL
+SELECT 'SystemSettings', COUNT(*) FROM SystemSettings
+UNION ALL
+SELECT 'Notifications', COUNT(*) FROM Notifications;

@@ -1,918 +1,585 @@
 #!/usr/bin/env python3
 """
-DENSO Project Manager Pro - Enhanced Enterprise Application
-ระบบที่ปรับปรุงประสิทธิภาพและความเสถียรสำหรับระดับ Enterprise
+app.py
+DENSO Project Manager Pro - Main Application
+Enterprise-grade project management system
 """
-
 import streamlit as st
 import sys
 import os
-import time
 import logging
-import traceback
-import gc
-import threading
-from datetime import datetime, timedelta
-from concurrent.futures import ThreadPoolExecutor
-from functools import lru_cache, wraps
-from typing import Dict, Any, Optional
+from datetime import datetime
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from pathlib import Path
 
-# Performance-optimized page config
+# Add project root to path
+sys.path.append(str(Path(__file__).parent))
+
+# Import modules
+try:
+    from config.database import get_database_manager
+    from modules.auth import AuthenticationManager
+    from modules.projects import ProjectManager
+    from modules.tasks import TaskManager
+    from modules.users import UserManager
+    from modules.analytics import AnalyticsManager
+    from modules.settings import SettingsManager
+    from utils.ui_components import UIComponents
+    from utils.error_handler import safe_execute, handle_error
+except ImportError as e:
+    st.error(f"ไม่พบโมดูลที่จำเป็น: {e}")
+    st.stop()
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[logging.FileHandler("logs/app.log"), logging.StreamHandler()],
+)
+logger = logging.getLogger(__name__)
+
+# Page configuration
 st.set_page_config(
     page_title="DENSO Project Manager Pro",
     page_icon="🚗",
     layout="wide",
     initial_sidebar_state="expanded",
-    menu_items={"About": "DENSO Project Manager Pro v2.0 Enterprise"},
 )
 
-# Add modules to path
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-
-# Enhanced logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s",
-    handlers=[
-        logging.FileHandler("logs/app.log", encoding="utf-8"),
-        logging.StreamHandler(),
-    ],
+# Custom CSS - Optimized for screen scaling
+st.markdown(
+    """
+<style>
+    /* Main layout optimization */
+    .main .block-container {
+        padding-top: 1rem;
+        padding-bottom: 1rem;
+        max-width: 100%;
+    }
+    
+    /* Compact header */
+    .main-header {
+        background: linear-gradient(90deg, #1e3c72 0%, #2a5298 100%);
+        padding: 0.8rem 1rem;
+        border-radius: 8px;
+        margin-bottom: 1.5rem;
+        color: white;
+        text-align: center;
+    }
+    
+    .main-header h1 {
+        font-size: 1.8rem;
+        margin: 0;
+        font-weight: 600;
+    }
+    
+    .main-header p {
+        font-size: 0.9rem;
+        margin: 0.3rem 0 0 0;
+        opacity: 0.9;
+    }
+    
+    /* Login form styling */
+    .login-container {
+        background: white;
+        padding: 2rem;
+        border-radius: 12px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        border: 1px solid #e0e0e0;
+        max-width: 400px;
+        margin: 0 auto;
+    }
+    
+    .login-title {
+        text-align: center;
+        color: #1e3c72;
+        font-size: 1.5rem;
+        margin-bottom: 1.5rem;
+        font-weight: 600;
+    }
+    
+    /* Metric cards */
+    .metric-card {
+        background: white;
+        padding: 1rem;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        border-left: 4px solid #2a5298;
+        margin-bottom: 1rem;
+    }
+    
+    /* Status indicators */
+    .status-active { color: #28a745; font-weight: 500; }
+    .status-pending { color: #ffc107; font-weight: 500; }
+    .status-overdue { color: #dc3545; font-weight: 500; }
+    
+    /* Sidebar optimization */
+    .sidebar-nav {
+        background: #f8f9fa;
+        padding: 1rem;
+        border-radius: 8px;
+        margin-bottom: 1rem;
+        border: 1px solid #dee2e6;
+    }
+    
+    .sidebar-nav h4 {
+        color: #1e3c72;
+        font-size: 1.1rem;
+        margin-bottom: 0.5rem;
+    }
+    
+    .sidebar-nav p {
+        font-size: 0.85rem;
+        margin: 0.2rem 0;
+        color: #666;
+    }
+    
+    /* Compact metrics */
+    div[data-testid="metric-container"] {
+        background: white;
+        border: 1px solid #e0e0e0;
+        padding: 0.8rem;
+        border-radius: 6px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    
+    /* Form elements */
+    .stTextInput input {
+        border-radius: 8px;
+        border: 1px solid #ddd;
+        padding: 0.6rem;
+    }
+    
+    .stTextInput input:focus {
+        border-color: #2a5298;
+        box-shadow: 0 0 0 2px rgba(42, 82, 152, 0.1);
+    }
+    
+    /* Button styling */
+    .stButton button {
+        border-radius: 8px;
+        border: none;
+        font-weight: 500;
+        transition: all 0.2s;
+    }
+    
+    .stButton button[kind="primary"] {
+        background: linear-gradient(90deg, #1e3c72 0%, #2a5298 100%);
+    }
+    
+    .stButton button[kind="primary"]:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+    }
+    
+    /* Chart containers */
+    .js-plotly-plot {
+        border-radius: 8px;
+        overflow: hidden;
+    }
+    
+    /* Responsive adjustments */
+    @media (max-width: 768px) {
+        .main-header h1 { font-size: 1.5rem; }
+        .main-header p { font-size: 0.8rem; }
+        .login-container { padding: 1.5rem; }
+    }
+    
+    /* Hide Streamlit elements */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+</style>
+""",
+    unsafe_allow_html=True,
 )
-logger = logging.getLogger(__name__)
 
 
-class PerformanceTracker:
-    """ติดตามประสิทธิภาพระบบแบบ real-time"""
-
-    def __init__(self):
-        self.start_time = time.time()
-        self.page_loads = {}
-        self.operations = {}
-
-    def track_operation(self, name: str, duration: float):
-        """บันทึกเวลาการทำงานของแต่ละ operation"""
-        if name not in self.operations:
-            self.operations[name] = []
-        self.operations[name].append(duration)
-        if len(self.operations[name]) > 10:  # Keep last 10 only
-            self.operations[name] = self.operations[name][-10:]
-
-    def get_avg_time(self, name: str) -> float:
-        """คำนวณเวลาเฉลี่ย"""
-        times = self.operations.get(name, [])
-        return sum(times) / len(times) if times else 0.0
-
-
-class EnhancedCache:
-    """ระบบ cache ที่มีประสิทธิภาพสูง"""
-
-    def __init__(self, max_size: int = 100, ttl: int = 300):
-        self.cache = {}
-        self.timestamps = {}
-        self.max_size = max_size
-        self.ttl = ttl
-        self.hits = 0
-        self.misses = 0
-
-    def get(self, key: str, default=None):
-        """ดึงข้อมูลจาก cache"""
-        if key in self.cache:
-            # Check TTL
-            if time.time() - self.timestamps[key] < self.ttl:
-                self.hits += 1
-                return self.cache[key]
-            else:
-                # Expired
-                del self.cache[key]
-                del self.timestamps[key]
-
-        self.misses += 1
-        return default
-
-    def set(self, key: str, value: Any):
-        """เก็บข้อมูลใน cache"""
-        # Evict if full
-        if len(self.cache) >= self.max_size:
-            oldest_key = min(self.timestamps.keys(), key=self.timestamps.get)
-            del self.cache[oldest_key]
-            del self.timestamps[oldest_key]
-
-        self.cache[key] = value
-        self.timestamps[key] = time.time()
-
-    def get_stats(self) -> Dict[str, Any]:
-        """สถิติ cache performance"""
-        total = self.hits + self.misses
-        return {
-            "hit_rate": (self.hits / total * 100) if total > 0 else 0,
-            "size": len(self.cache),
-            "max_size": self.max_size,
-        }
-
-
-def performance_monitor(operation_name: str):
-    """Decorator สำหรับติดตามประสิทธิภาพ"""
-
-    def decorator(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            start_time = time.time()
-            try:
-                result = func(*args, **kwargs)
-                return result
-            finally:
-                duration = time.time() - start_time
-                if "perf_tracker" in st.session_state:
-                    st.session_state.perf_tracker.track_operation(
-                        operation_name, duration
-                    )
-
-                # Log slow operations
-                if duration > 2.0:
-                    logger.warning(f"Slow operation {operation_name}: {duration:.2f}s")
-
-        return wrapper
-
-    return decorator
-
-
-@lru_cache(maxsize=None)
-def lazy_import_modules():
-    """Import modules แบบ lazy loading"""
-    try:
-        from database_env_switcher import (
-            render_environment_selector,
-            get_database_manager_with_env,
-        )
-        from modules.auth import AuthManager
-        from modules.ui_components import UIRenderer
-        from modules.projects import ProjectManager
-        from modules.tasks import TaskManager
-        from modules.analytics import AnalyticsManager
-        from modules.settings import SettingsManager
-        from modules.users import UserManager
-        from modules.team import TeamManager
-        from utils.performance_monitor import PerformanceMonitor
-
-        return {
-            "env_selector": render_environment_selector,
-            "get_db": get_database_manager_with_env,
-            "managers": {
-                "auth": AuthManager,
-                "ui": UIRenderer,
-                "projects": ProjectManager,
-                "tasks": TaskManager,
-                "analytics": AnalyticsManager,
-                "settings": SettingsManager,
-                "users": UserManager,
-                "team": TeamManager,
-                "performance": PerformanceMonitor,
-            },
-        }
-    except ImportError as e:
-        logger.error(f"Module import failed: {e}")
-        return None
-
-
-class DENSOProjectManagerPro:
-    """DENSO Project Manager Pro - Enhanced Enterprise Version"""
+class DENSOProjectManager:
+    """Main application class"""
 
     def __init__(self):
-        """Initialize application with optimized performance"""
-        self.init_start = time.time()
-        self._init_session_state()
-        self._init_performance_tracking()
-        self._init_cache()
-        self.executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="denso")
+        self.init_session_state()
+        self.db_manager = self.init_database()
+        self.auth_manager = AuthenticationManager(self.db_manager)
+        self.ui = UIComponents()
 
-        logger.info("Application initialization started")
+        # Initialize managers
+        self.project_manager = ProjectManager(self.db_manager)
+        self.task_manager = TaskManager(self.db_manager)
+        self.user_manager = UserManager(self.db_manager)
+        self.analytics_manager = AnalyticsManager(self.db_manager)
+        self.settings_manager = SettingsManager(self.db_manager)
 
-    def _init_session_state(self):
-        """Initialize session state with defaults"""
-        defaults = {
-            "initialized": False,
-            "authenticated": False,
-            "current_page": "Dashboard",
-            "current_user": None,
-            "last_activity": time.time(),
-            "managers_loaded": False,
-            "performance_mode": True,
-            "auto_refresh": False,
-            "theme": "professional",
-        }
+    def init_session_state(self):
+        """Initialize session state variables"""
+        if "authenticated" not in st.session_state:
+            st.session_state.authenticated = False
+        if "user_data" not in st.session_state:
+            st.session_state.user_data = None
+        if "current_page" not in st.session_state:
+            st.session_state.current_page = "dashboard"
 
-        for key, value in defaults.items():
-            if key not in st.session_state:
-                st.session_state[key] = value
-
-    def _init_performance_tracking(self):
-        """Initialize performance tracking"""
-        if "perf_tracker" not in st.session_state:
-            st.session_state.perf_tracker = PerformanceTracker()
-
-    def _init_cache(self):
-        """Initialize caching system"""
-        if "app_cache" not in st.session_state:
-            st.session_state.app_cache = EnhancedCache()
-
-    @performance_monitor("lazy_load_managers")
-    def _lazy_load_managers(self):
-        """Load managers only when needed"""
-        if st.session_state.get("managers_loaded", False):
-            return True
-
+    def init_database(self):
+        """Initialize database connection"""
         try:
-            modules = lazy_import_modules()
-            if not modules:
-                raise ImportError("Failed to load required modules")
-
-            # Database manager
-            try:
-                self.db_manager = modules["get_db"]()
-            except Exception as e:
-                logger.warning(f"Environment switcher failed: {e}, using fallback")
-                from config.database import get_database_manager
-
-                self.db_manager = get_database_manager()
-
-            # Initialize all managers
-            managers = modules["managers"]
-            self.auth_manager = managers["auth"](self.db_manager)
-            self.ui_renderer = managers["ui"]()
-            self.project_manager = managers["projects"](self.db_manager)
-            self.task_manager = managers["tasks"](self.db_manager)
-            self.analytics_manager = managers["analytics"](self.db_manager)
-            self.settings_manager = managers["settings"](self.db_manager)
-            self.user_manager = managers["users"](self.db_manager)
-            self.team_manager = managers["team"](self.db_manager)
-            self.performance_monitor = managers["performance"]()
-
-            # Store in session state
-            st.session_state.managers = {
-                "db": self.db_manager,
-                "auth": self.auth_manager,
-                "projects": self.project_manager,
-                "tasks": self.task_manager,
-                "analytics": self.analytics_manager,
-                "settings": self.settings_manager,
-                "users": self.user_manager,
-                "team": self.team_manager,
-                "performance": self.performance_monitor,
-            }
-
-            st.session_state.managers_loaded = True
-
-            init_time = time.time() - self.init_start
-            logger.info(f"Managers loaded successfully in {init_time:.2f}s")
-            return True
-
+            return get_database_manager()
         except Exception as e:
-            logger.error(f"Manager loading failed: {e}")
-            return False
-
-    def run(self):
-        """Main application runner"""
-        page_start = time.time()
-
-        try:
-            # Session timeout check
-            self._check_session_timeout()
-
-            # Lazy load managers
-            if not st.session_state.get("managers_loaded", False):
-                with st.spinner("🔄 กำลังโหลดระบบ..."):
-                    if not self._lazy_load_managers():
-                        self._render_loading_error()
-                        return
-
-            # Render sidebar
-            self._render_sidebar()
-
-            # Authentication check
-            if not self._handle_authentication():
-                return
-
-            # Main content
-            self._render_main_content()
-
-            # Footer
-            self._render_footer()
-
-        except Exception as e:
-            self._handle_runtime_error(e)
-        finally:
-            # Performance tracking
-            page_time = time.time() - page_start
-            st.session_state.perf_tracker.track_operation("page_render", page_time)
-
-            # Memory cleanup if needed
-            if page_time > 3.0:
-                self._cleanup_memory()
-
-    def _check_session_timeout(self):
-        """Check and handle session timeout"""
-        current_time = time.time()
-        last_activity = st.session_state.get("last_activity", current_time)
-
-        if current_time - last_activity > 3600:  # 1 hour timeout
-            st.session_state.clear()
-            st.warning("⏰ Session หมดอายุ กรุณาเข้าสู่ระบบใหม่")
+            st.error(f"❌ ไม่สามารถเชื่อมต่อฐานข้อมูลได้: {e}")
+            st.info("🔧 กรุณาตรวจสอบ .streamlit/secrets.toml และการเชื่อมต่อ SQL Server")
             st.stop()
 
-        st.session_state.last_activity = current_time
+    def show_login_page(self):
+        """Show clean login page without sample credentials"""
+        # Compact header
+        st.markdown(
+            """
+        <div class="main-header">
+            <h1>🚗 DENSO Project Manager Pro</h1>
+            <p>ระบบจัดการโครงการสำหรับ DENSO Corporation</p>
+        </div>
+        """,
+            unsafe_allow_html=True,
+        )
 
-    def _render_sidebar(self):
-        """Render enhanced sidebar"""
-        with st.sidebar:
-            # Header
-            st.markdown("# 🚗 DENSO PM Pro")
-            st.markdown("### Enterprise Edition")
+        # Centered login form
+        col1, col2, col3 = st.columns([1, 1.5, 1])
 
-            # Environment selector
-            try:
-                modules = lazy_import_modules()
-                if modules and "env_selector" in modules:
-                    modules["env_selector"]()
-            except:
-                pass
-
-            # System status
-            self._render_system_status()
-
-            # Navigation
-            self._render_navigation()
-
-            # Quick actions
-            self._render_quick_actions()
-
-    def _render_system_status(self):
-        """Render system status indicators"""
-        st.markdown("#### ⚡ System Status")
-
-        col1, col2 = st.columns(2)
-
-        # Performance metrics
-        avg_load = st.session_state.perf_tracker.get_avg_time("page_render")
-        cache_stats = st.session_state.app_cache.get_stats()
-
-        with col1:
-            load_indicator = (
-                "🟢" if avg_load < 1.0 else "🟡" if avg_load < 3.0 else "🔴"
+        with col2:
+            st.markdown(
+                """
+                <div class="login-container">
+                    <div class="login-title">🔐 เข้าสู่ระบบ</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
             )
-            st.metric("Load Time", f"{avg_load:.1f}s", delta=load_indicator)
 
-        with col2:
-            hit_rate = cache_stats["hit_rate"]
-            cache_indicator = "🟢" if hit_rate > 80 else "🟡" if hit_rate > 60 else "🔴"
-            st.metric("Cache Hit", f"{hit_rate:.0f}%", delta=cache_indicator)
-
-        # Database status
-        db_status = (
-            "🟢 Connected" if st.session_state.get("managers_loaded") else "🟡 Loading"
-        )
-        st.markdown(f"**Database:** {db_status}")
-
-        # Auto-refresh toggle
-        st.session_state.auto_refresh = st.toggle("Auto Refresh", value=False)
-
-    def _render_navigation(self):
-        """Render navigation menu"""
-        st.markdown("#### 📋 Navigation")
-
-        pages = {
-            "📊 Dashboard": "Dashboard",
-            "📁 Projects": "Projects",
-            "✅ Tasks": "Tasks",
-            "👥 Team": "Team",
-            "📈 Analytics": "Analytics",
-            "⚙️ Settings": "Settings",
-            "🔧 Admin": "Admin",
-        }
-
-        current_page = st.session_state.current_page
-        selected = st.radio(
-            "เลือกหน้า",
-            list(pages.keys()),
-            index=list(pages.values()).index(current_page),
-            label_visibility="collapsed",
-        )
-
-        new_page = pages[selected]
-        if new_page != current_page:
-            st.session_state.current_page = new_page
-            st.rerun()
-
-    def _render_quick_actions(self):
-        """Render quick action buttons"""
-        st.markdown("#### 🚀 Quick Actions")
-
-        col1, col2 = st.columns(2)
-
-        with col1:
-            if st.button("➕ Project", use_container_width=True):
-                st.session_state.current_page = "Projects"
-                st.session_state.show_new_project = True
-                st.rerun()
-
-        with col2:
-            if st.button("➕ Task", use_container_width=True):
-                st.session_state.current_page = "Tasks"
-                st.session_state.show_new_task = True
-                st.rerun()
-
-    def _handle_authentication(self) -> bool:
-        """Handle authentication with caching"""
-        # Check cache first
-        auth_cached = st.session_state.app_cache.get("auth_status")
-        if auth_cached is not None:
-            return auth_cached
-
-        if st.session_state.authenticated:
-            st.session_state.app_cache.set("auth_status", True)
-            return True
-
-        # Show login form
-        self._render_login()
-        return False
-
-    def _render_login(self):
-        """Render optimized login form"""
-        st.title("🚗 DENSO Project Manager Pro")
-        st.markdown("### เข้าสู่ระบบ Enterprise Edition")
-
-        with st.form("login_form"):
-            col1, col2, col3 = st.columns([1, 2, 1])
-
-            with col2:
-                username = st.text_input("👤 Username", placeholder="ชื่อผู้ใช้")
+            with st.form("login_form"):
+                username = st.text_input(
+                    "👤 ชื่อผู้ใช้",
+                    placeholder="กรอกชื่อผู้ใช้ของคุณ",
+                    help="ใช้ชื่อผู้ใช้ที่ได้รับจากผู้ดูแลระบบ",
+                )
                 password = st.text_input(
-                    "🔒 Password", type="password", placeholder="รหัสผ่าน"
+                    "🔒 รหัสผ่าน",
+                    type="password",
+                    placeholder="กรอกรหัสผ่านของคุณ",
+                    help="ใช้รหัสผ่านที่ได้รับจากผู้ดูแลระบบ",
                 )
+                remember_me = st.checkbox("จดจำการเข้าสู่ระบบ")
 
-                col_btn1, col_btn2 = st.columns(2)
+                if st.form_submit_button(
+                    "เข้าสู่ระบบ", use_container_width=True, type="primary"
+                ):
+                    if username and password:
+                        result = safe_execute(
+                            self.auth_manager.authenticate_user,
+                            username,
+                            password,
+                            default_return={"success": False, "message": "เกิดข้อผิดพลาด"},
+                        )
 
-                with col_btn1:
-                    login_btn = st.form_submit_button(
-                        "🔑 เข้าสู่ระบบ", type="primary", use_container_width=True
-                    )
-
-                with col_btn2:
-                    demo_btn = st.form_submit_button(
-                        "🎯 Demo", use_container_width=True
-                    )
-
-                if demo_btn:
-                    username, password = "admin", "admin123"
-                    login_btn = True
-
-                if login_btn and username and password:
-                    # Simple authentication for demo
-                    if username == "admin" and password == "admin123":
-                        st.session_state.authenticated = True
-                        st.session_state.current_user = {
-                            "username": username,
-                            "name": "System Administrator",
-                            "role": "Admin",
-                        }
-                        st.session_state.app_cache.set("auth_status", True)
-                        st.success("✅ เข้าสู่ระบบสำเร็จ!")
-                        time.sleep(0.5)
-                        st.rerun()
+                        if result["success"]:
+                            st.session_state.authenticated = True
+                            st.session_state.user_data = result["user_data"]
+                            st.success("✅ เข้าสู่ระบบสำเร็จ")
+                            st.rerun()
+                        else:
+                            st.error(f"❌ {result['message']}")
                     else:
-                        st.error("❌ ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง")
+                        st.warning("⚠️ กรุณากรอกชื่อผู้ใช้และรหัสผ่าน")
 
-    def _render_main_content(self):
-        """Render main content based on current page"""
-        current_page = st.session_state.current_page
-
-        page_functions = {
-            "Dashboard": self._render_dashboard,
-            "Projects": self._render_projects,
-            "Tasks": self._render_tasks,
-            "Team": self._render_team,
-            "Analytics": self._render_analytics,
-            "Settings": self._render_settings,
-            "Admin": self._render_admin,
-        }
-
-        if current_page in page_functions:
-            try:
-                page_functions[current_page]()
-            except Exception as e:
-                logger.error(f"Page {current_page} error: {e}")
-                self._render_page_error(current_page, e)
-        else:
-            st.error(f"ไม่พบหน้า {current_page}")
-
-    @performance_monitor("dashboard_render")
-    def _render_dashboard(self):
-        """Render optimized dashboard"""
-        st.title("📊 DENSO Project Manager Dashboard")
-
-        # KPI Row
-        col1, col2, col3, col4 = st.columns(4)
-
-        with col1:
-            st.metric("Projects", "12", delta="2")
-        with col2:
-            st.metric("Active Tasks", "45", delta="8")
-        with col3:
-            st.metric("Team Members", "24", delta="1")
-        with col4:
-            st.metric("Completion Rate", "78%", delta="5%")
-
-        # Content tabs
-        tab1, tab2, tab3 = st.tabs(["📈 Overview", "🔥 Active", "⚡ Performance"])
-
-        with tab1:
-            self._render_overview_charts()
-
-        with tab2:
-            self._render_active_items()
-
-        with tab3:
-            self._render_performance_dashboard()
-
-    def _render_overview_charts(self):
-        """Render overview charts"""
-        import pandas as pd
-        import plotly.express as px
-
-        # Mock data for demo
-        data = pd.DataFrame(
-            {
-                "Month": ["Jan", "Feb", "Mar", "Apr", "May", "Jun"],
-                "Projects": [8, 10, 12, 15, 14, 12],
-                "Tasks": [120, 145, 168, 180, 175, 165],
-            }
-        )
-
-        col1, col2 = st.columns(2)
-
-        with col1:
-            fig = px.line(data, x="Month", y="Projects", title="Project Trends")
-            st.plotly_chart(fig, use_container_width=True)
-
-        with col2:
-            fig = px.bar(data, x="Month", y="Tasks", title="Task Volume")
-            st.plotly_chart(fig, use_container_width=True)
-
-    def _render_active_items(self):
-        """Render active projects and tasks"""
-        col1, col2 = st.columns(2)
-
-        with col1:
-            st.subheader("📁 Active Projects")
-            projects = [
-                {"name": "DENSO Engine Module V2", "progress": 75},
-                {"name": "Quality Control System", "progress": 45},
-                {"name": "IoT Integration", "progress": 90},
-            ]
-
-            for proj in projects:
-                st.markdown(f"**{proj['name']}**")
-                st.progress(proj["progress"] / 100)
-                st.markdown(f"Progress: {proj['progress']}%")
-                st.divider()
-
-        with col2:
-            st.subheader("✅ Recent Tasks")
-            tasks = [
-                {"title": "Design Review Phase 1", "assignee": "Thammaphon C."},
-                {"title": "Prototype Testing", "assignee": "Engineering Team"},
-                {"title": "Documentation Update", "assignee": "Technical Writer"},
-            ]
-
-            for task in tasks:
-                st.markdown(f"**{task['title']}**")
-                st.markdown(f"👤 {task['assignee']}")
-                st.divider()
-
-    def _render_performance_dashboard(self):
-        """Render performance monitoring dashboard"""
-        st.subheader("⚡ System Performance")
-
-        # Performance metrics
-        perf_tracker = st.session_state.perf_tracker
-        cache_stats = st.session_state.app_cache.get_stats()
-
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-            avg_render = perf_tracker.get_avg_time("page_render")
-            st.metric("Avg Page Load", f"{avg_render:.2f}s")
-
-        with col2:
-            st.metric("Cache Hit Rate", f"{cache_stats['hit_rate']:.0f}%")
-
-        with col3:
-            uptime = time.time() - perf_tracker.start_time
-            st.metric("Uptime", f"{uptime/60:.0f} min")
-
-        # Performance chart
-        if perf_tracker.operations:
-            st.subheader("📊 Operation Performance")
-            perf_data = []
-            for op, times in perf_tracker.operations.items():
-                avg_time = sum(times) / len(times)
-                perf_data.append({"Operation": op, "Avg Time (s)": avg_time})
-
-            if perf_data:
-                import pandas as pd
-                import plotly.express as px
-
-                df = pd.DataFrame(perf_data)
-                fig = px.bar(
-                    df, x="Operation", y="Avg Time (s)", title="Average Operation Times"
-                )
-                st.plotly_chart(fig, use_container_width=True)
-
-    def _render_projects(self):
-        """Render projects page"""
-        st.title("📁 Project Management")
-
-        if hasattr(self, "project_manager"):
-            try:
-                self.project_manager.render_project_management()
-            except Exception as e:
-                logger.error(f"Project manager error: {e}")
-                st.error("🚨 เกิดข้อผิดพลาดในระบบโครงการ")
-        else:
-            st.info("🔄 กำลังโหลดระบบจัดการโครงการ...")
-
-    def _render_tasks(self):
-        """Render tasks page"""
-        st.title("✅ Task Management")
-
-        if hasattr(self, "task_manager"):
-            try:
-                self.task_manager.render_task_management()
-            except Exception as e:
-                logger.error(f"Task manager error: {e}")
-                st.error("🚨 เกิดข้อผิดพลาดในระบบงาน")
-        else:
-            st.info("🔄 กำลังโหลดระบบจัดการงาน...")
-
-    def _render_team(self):
-        """Render team page"""
-        st.title("👥 Team Management")
-
-        if hasattr(self, "team_manager"):
-            try:
-                self.team_manager.render_page()
-            except Exception as e:
-                logger.error(f"Team manager error: {e}")
-                st.error("🚨 เกิดข้อผิดพลาดในระบบทีม")
-        else:
-            st.info("🔄 กำลังโหลดระบบจัดการทีม...")
-
-    def _render_analytics(self):
-        """Render analytics page"""
-        st.title("📈 Analytics & Reports")
-
-        if hasattr(self, "analytics_manager"):
-            try:
-                self.analytics_manager.render_analytics()
-            except Exception as e:
-                logger.error(f"Analytics manager error: {e}")
-                st.error("🚨 เกิดข้อผิดพลาดในระบบรายงาน")
-        else:
-            st.info("🔄 กำลังโหลดระบบรายงาน...")
-
-    def _render_settings(self):
-        """Render settings page"""
-        st.title("⚙️ System Settings")
-
-        if hasattr(self, "settings_manager"):
-            try:
-                self.settings_manager.render_settings()
-            except Exception as e:
-                logger.error(f"Settings manager error: {e}")
-                st.error("🚨 เกิดข้อผิดพลาดในระบบตั้งค่า")
-        else:
-            st.info("🔄 กำลังโหลดระบบตั้งค่า...")
-
-    def _render_admin(self):
-        """Render admin page"""
-        st.title("🔧 System Administration")
-        st.info("🔄 ระบบ Admin กำลังพัฒนา")
-
-    def _render_page_error(self, page_name: str, error: Exception):
-        """Render page error with recovery options"""
-        st.title(f"🚨 ข้อผิดพลาดในหน้า {page_name}")
-        st.error(f"เกิดข้อผิดพลาดขณะโหลดหน้า {page_name}")
-
-        with st.expander("🔍 รายละเอียดข้อผิดพลาด"):
-            st.code(str(error))
-
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-            if st.button("🔄 ลองใหม่", use_container_width=True):
-                st.rerun()
-
-        with col2:
-            if st.button("🏠 Dashboard", use_container_width=True):
-                st.session_state.current_page = "Dashboard"
-                st.rerun()
-
-        with col3:
-            if st.button("🧹 Clear Cache", use_container_width=True):
-                st.session_state.app_cache = EnhancedCache()
-                st.rerun()
-
-    def _render_loading_error(self):
-        """Render loading error page"""
-        st.title("🚨 ข้อผิดพลาดในการโหลดระบบ")
-        st.error("ไม่สามารถโหลด modules ที่จำเป็นได้")
-
-        col1, col2 = st.columns(2)
-
-        with col1:
-            if st.button("🔄 ลองใหม่", type="primary", use_container_width=True):
-                st.session_state.managers_loaded = False
-                st.rerun()
-
-        with col2:
-            if st.button("📞 ติดต่อ Support", use_container_width=True):
-                st.info("กรุณาติดต่อ: support@denso.com")
-
-    def _render_footer(self):
-        """Render performance footer"""
+        # Help section
         st.markdown("---")
-
-        col1, col2, col3, col4 = st.columns(4)
-
-        with col1:
-            st.markdown("**🚗 DENSO PM Pro v2.0**")
-
+        col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
-            avg_load = st.session_state.perf_tracker.get_avg_time("page_render")
-            st.markdown(f"**⚡ Load:** {avg_load:.2f}s")
+            st.info(
+                """
+                **🆘 ต้องการความช่วยเหลือ?**
+                
+                📞 ติดต่อทีม DENSO Innovation Team  
+                📧 Email: innovation.team@denso.com  
+                🕐 เวลาทำการ: จันทร์-ศุกร์ 08:00-17:00
+                """
+            )
 
-        with col3:
-            cache_stats = st.session_state.app_cache.get_stats()
-            st.markdown(f"**📊 Cache:** {cache_stats['hit_rate']:.0f}%")
+    def show_sidebar_navigation(self):
+        """Show compact sidebar navigation"""
+        user_data = st.session_state.user_data
 
-        with col4:
-            st.markdown(f"**🕒 Updated:** {datetime.now().strftime('%H:%M:%S')}")
+        with st.sidebar:
+            # Compact user info
+            st.markdown(
+                f"""
+            <div class="sidebar-nav">
+                <h4>👤 {user_data['FirstName']} {user_data['LastName']}</h4>
+                <p><strong>ตำแหน่ง:</strong> {user_data['Role']}</p>
+                <p><strong>แผนก:</strong> {user_data.get('Department', 'N/A')}</p>
+            </div>
+            """,
+                unsafe_allow_html=True,
+            )
 
-    def _cleanup_memory(self):
-        """Cleanup memory for better performance"""
+            # Navigation menu
+            st.markdown("### 📋 เมนูหลัก")
+
+            pages = {
+                "dashboard": "📊 แดชบอร์ด",
+                "projects": "📁 จัดการโครงการ",
+                "tasks": "✅ จัดการงาน",
+                "analytics": "📈 รายงานและการวิเคราะห์",
+                "users": "👥 จัดการผู้ใช้",
+                "settings": "⚙️ ตั้งค่าระบบ",
+            }
+
+            # Add database admin for admin users
+            if user_data["Role"] == "Admin":
+                pages["database"] = "🗄️ จัดการฐานข้อมูล"
+
+            selected_page = st.selectbox(
+                "เลือกหน้า",
+                options=list(pages.keys()),
+                format_func=lambda x: pages[x],
+                index=list(pages.keys()).index(st.session_state.current_page),
+            )
+
+            if selected_page != st.session_state.current_page:
+                st.session_state.current_page = selected_page
+                st.rerun()
+
+            st.markdown("---")
+
+            # Compact quick stats
+            st.markdown("### 📊 สถิติด่วน")
+            self.show_quick_stats()
+
+            st.markdown("---")
+
+            # Logout button
+            if st.button("🚪 ออกจากระบบ", use_container_width=True):
+                for key in list(st.session_state.keys()):
+                    del st.session_state[key]
+                st.rerun()
+
+    def show_quick_stats(self):
+        """Show compact quick statistics in sidebar"""
         try:
-            # Clear expired cache
-            cache = st.session_state.app_cache
-            current_time = time.time()
-            expired_keys = []
+            # Get quick stats
+            total_projects = safe_execute(
+                self.project_manager.get_total_projects, default_return=0
+            )
 
-            for key, timestamp in cache.timestamps.items():
-                if current_time - timestamp > cache.ttl:
-                    expired_keys.append(key)
+            active_tasks = safe_execute(
+                self.task_manager.get_active_tasks_count, default_return=0
+            )
 
-            for key in expired_keys:
-                cache.cache.pop(key, None)
-                cache.timestamps.pop(key, None)
+            overdue_tasks = safe_execute(
+                self.task_manager.get_overdue_tasks_count, default_return=0
+            )
 
-            # Force garbage collection
-            gc.collect()
-
-            logger.info(
-                f"Memory cleanup: removed {len(expired_keys)} expired cache items"
+            # Compact metrics
+            st.metric("📁 โครงการ", total_projects)
+            st.metric("✅ งานที่ทำ", active_tasks)
+            st.metric(
+                "⏰ เลยกำหนด",
+                overdue_tasks,
+                delta=f"-{overdue_tasks}" if overdue_tasks > 0 else None,
             )
 
         except Exception as e:
-            logger.error(f"Memory cleanup error: {e}")
+            st.error(f"ไม่สามารถโหลดสถิติได้: {e}")
 
-    def _handle_runtime_error(self, error: Exception):
-        """Handle runtime errors gracefully"""
-        logger.error(f"Runtime error: {error}")
+    def show_dashboard(self):
+        """Show compact main dashboard"""
+        # Compact header
+        st.markdown(
+            """
+        <div class="main-header">
+            <h1>📊 แดชบอร์ด DENSO Project Manager Pro</h1>
+            <p>ภาพรวมการดำเนินงานโครงการ</p>
+        </div>
+        """,
+            unsafe_allow_html=True,
+        )
 
-        st.title("🚨 ข้อผิดพลาดระบบ")
-        st.error("เกิดข้อผิดพลาดที่ไม่คาดคิด")
+        # Key metrics in compact layout
+        col1, col2, col3, col4 = st.columns(4)
 
-        with st.expander("🔍 รายละเอียดเทคนิค"):
-            st.code(traceback.format_exc())
+        with col1:
+            total_projects = safe_execute(
+                self.project_manager.get_total_projects, default_return=0
+            )
+            st.metric("📁 โครงการทั้งหมด", total_projects)
 
+        with col2:
+            active_projects = safe_execute(
+                self.project_manager.get_active_projects_count, default_return=0
+            )
+            st.metric("🚀 กำลังดำเนินการ", active_projects)
+
+        with col3:
+            total_tasks = safe_execute(
+                self.task_manager.get_total_tasks, default_return=0
+            )
+            st.metric("✅ งานทั้งหมด", total_tasks)
+
+        with col4:
+            completion_rate = safe_execute(
+                self.analytics_manager.get_completion_rate, default_return=0
+            )
+            st.metric("📈 อัตราสำเร็จ", f"{completion_rate:.1f}%")
+
+        # Charts in compact layout
         col1, col2 = st.columns(2)
 
         with col1:
-            if st.button("🔄 รีเฟรชแอป", type="primary", use_container_width=True):
-                st.session_state.clear()
-                st.rerun()
+            st.subheader("📊 สถานะโครงการ")
+            project_status_data = safe_execute(
+                self.analytics_manager.get_project_status_distribution,
+                default_return=[],
+            )
+
+            if project_status_data:
+                df = pd.DataFrame(project_status_data)
+                fig = px.pie(
+                    df,
+                    values="count",
+                    names="status",
+                    title="การกระจายสถานะโครงการ",
+                    height=350,
+                )
+                fig.update_layout(margin=dict(t=40, b=0, l=0, r=0))
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("ไม่มีข้อมูลโครงการ")
 
         with col2:
-            if st.button("🏠 กลับหน้าหลัก", use_container_width=True):
-                st.session_state.current_page = "Dashboard"
-                st.rerun()
+            st.subheader("📈 ความคืบหน้า")
+            progress_data = safe_execute(
+                self.analytics_manager.get_progress_timeline, default_return=[]
+            )
+
+            if progress_data:
+                df = pd.DataFrame(progress_data)
+                fig = px.line(
+                    df, x="date", y="completion", title="ความคืบหน้าโครงการ", height=350
+                )
+                fig.update_layout(margin=dict(t=40, b=0, l=0, r=0))
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("ไม่มีข้อมูลความคืบหน้า")
+
+        # Compact recent activities
+        st.subheader("🕒 กิจกรรมล่าสุด")
+        recent_activities = safe_execute(
+            self.analytics_manager.get_recent_activities, limit=5, default_return=[]
+        )
+
+        if recent_activities:
+            for i, activity in enumerate(recent_activities):
+                if i < 3:  # Show only 3 activities to save space
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
+                        st.markdown(
+                            f"**{activity.get('activity_type', 'N/A')}** - {activity.get('description', 'N/A')}"
+                        )
+                    with col2:
+                        st.markdown(f"*{activity.get('user_name', 'N/A')}*")
+            if len(recent_activities) > 3:
+                st.markdown(f"*และอีก {len(recent_activities) - 3} กิจกรรม...*")
+        else:
+            st.info("ไม่มีกิจกรรมล่าสุด")
+
+    def show_projects_page(self):
+        """Show projects management page"""
+        from modules.projects import show_projects_page
+
+        show_projects_page(self.project_manager, self.user_manager)
+
+    def show_tasks_page(self):
+        """Show tasks management page"""
+        from modules.tasks import show_tasks_page
+
+        show_tasks_page(self.task_manager, self.project_manager, self.user_manager)
+
+    def show_analytics_page(self):
+        """Show analytics and reports page"""
+        from modules.analytics import show_analytics_page
+
+        show_analytics_page(self.analytics_manager)
+
+    def show_users_page(self):
+        """Show users management page"""
+        user_data = st.session_state.user_data
+        if user_data["Role"] not in ["Admin", "Project Manager"]:
+            st.error("❌ คุณไม่มีสิทธิ์เข้าถึงหน้านี้")
+            return
+
+        from modules.users import show_users_page
+
+        show_users_page(self.user_manager)
+
+    def show_settings_page(self):
+        """Show settings page"""
+        from modules.settings import show_settings_page
+
+        show_settings_page(self.settings_manager, st.session_state.user_data)
+
+    def show_database_page(self):
+        """Show database admin page"""
+        user_data = st.session_state.user_data
+        if user_data["Role"] != "Admin":
+            st.error("❌ เฉพาะผู้ดูแลระบบเท่านั้นที่สามารถเข้าถึงหน้านี้ได้")
+            return
+
+        from modules.database_admin import show_database_admin_page
+
+        show_database_admin_page(self.db_manager)
+
+    def run(self):
+        """Run the main application"""
+        try:
+            if not st.session_state.authenticated:
+                self.show_login_page()
+            else:
+                self.show_sidebar_navigation()
+
+                # Route to appropriate page
+                page = st.session_state.current_page
+
+                if page == "dashboard":
+                    self.show_dashboard()
+                elif page == "projects":
+                    self.show_projects_page()
+                elif page == "tasks":
+                    self.show_tasks_page()
+                elif page == "analytics":
+                    self.show_analytics_page()
+                elif page == "users":
+                    self.show_users_page()
+                elif page == "settings":
+                    self.show_settings_page()
+                elif page == "database":
+                    self.show_database_page()
+                else:
+                    st.error("ไม่พบหน้าที่ร้องขอ")
+
+        except Exception as e:
+            handle_error(e, "เกิดข้อผิดพลาดในระบบ")
 
 
 def main():
-    """Main application entry point with enhanced error handling"""
+    """Main entry point"""
     try:
-        # Set optimal environment variables
-        os.environ.setdefault("DB_ENVIRONMENT", "local")
-        os.environ.setdefault("STREAMLIT_SERVER_RUN_ON_SAVE", "false")
-
-        # Initialize application
-        app_start = time.time()
-        logger.info("🚀 Starting DENSO Project Manager Pro...")
-
-        app = DENSOProjectManagerPro()
+        app = DENSOProjectManager()
         app.run()
-
-        # Log startup performance
-        startup_time = time.time() - app_start
-        if startup_time > 3.0:
-            logger.warning(f"Slow startup: {startup_time:.2f}s")
-        else:
-            logger.info(f"Application started successfully in {startup_time:.2f}s")
-
-    except KeyboardInterrupt:
-        logger.info("Application stopped by user")
-
     except Exception as e:
-        logger.critical(f"Critical application failure: {e}")
-
-        # Emergency UI for critical failures
-        st.title("🚨 ระบบขัดข้องร้ายแรง")
-        st.error("ระบบพบข้อผิดพลาดร้ายแรงและไม่สามารถดำเนินการต่อได้")
-
-        # Show error details
-        with st.expander("🔍 รายละเอียดข้อผิดพลาด"):
-            st.code(traceback.format_exc())
-
-        # Emergency options
-        st.markdown("### 🆘 ตัวเลือกฉุกเฉิน")
-
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-            if st.button(
-                "🔄 Emergency Restart", type="primary", use_container_width=True
-            ):
-                st.session_state.clear()
-                st.rerun()
-
-        with col2:
-            if st.button("📞 ติดต่อ IT Support", use_container_width=True):
-                st.markdown(
-                    """
-                **🔧 ฝ่าย IT Support:**
-                - Tel: ext. 1234
-                - Email: support@denso.com
-                - Line: @denso-it
-                """
-                )
-
-        with col3:
-            if st.button("📋 ดาวน์โหลด Error Log", use_container_width=True):
-                error_log = {
-                    "timestamp": datetime.now().isoformat(),
-                    "error": str(e),
-                    "traceback": traceback.format_exc(),
-                    "session_info": {
-                        "session_id": id(st.session_state),
-                        "user_agent": st.context.headers.get("user-agent", "Unknown"),
-                        "session_state_size": len(st.session_state),
-                    },
-                }
-
-                import json
-
-                st.download_button(
-                    label="💾 Download Error Report",
-                    data=json.dumps(error_log, indent=2, ensure_ascii=False),
-                    file_name=f"denso_error_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                    mime="application/json",
-                )
-
-        # System status information
-        st.markdown("### 📊 ข้อมูลระบบ")
-
-        try:
-            import psutil
-
-            system_info = {
-                "CPU Usage": f"{psutil.cpu_percent()}%",
-                "Memory Usage": f"{psutil.virtual_memory().percent}%",
-                "Available Memory": f"{psutil.virtual_memory().available / (1024**3):.1f} GB",
-                "Python Version": sys.version.split()[0],
-                "Streamlit Version": st.__version__,
-            }
-
-            for key, value in system_info.items():
-                st.metric(key, value)
-
-        except ImportError:
-            st.info("ไม่สามารถดึงข้อมูลระบบได้ (psutil not available)")
-
-    finally:
-        # Final cleanup
-        try:
-            gc.collect()
-            logger.info("Application shutdown completed")
-        except:
-            pass
+        st.error(f"❌ เกิดข้อผิดพลาดในการเริ่มต้นระบบ: {e}")
+        st.info("🔧 กรุณาตรวจสอบการติดตั้งและการตั้งค่า")
+        logger.error(f"Application startup failed: {e}")
 
 
 if __name__ == "__main__":

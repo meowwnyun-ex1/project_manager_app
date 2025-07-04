@@ -173,7 +173,7 @@ from_email = "noreply@denso.com"
 enable_ssl = true
 ```
 
-## 🏃‍♂️ การใช้งาน
+## 🏃 การใช้งาน
 
 ### 1. เริ่มต้นแอปพลิเคชัน
 

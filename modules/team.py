@@ -1,823 +1,1039 @@
+#!/usr/bin/env python3
 """
-Team Management Module
-โมดูลจัดการทีมงานแบบสมบูรณ์
+modules/tasks.py
+Task Management for DENSO Project Manager Pro
 """
-
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import datetime, timedelta
+from datetime import datetime, date, timedelta
+from typing import Dict, List, Any, Optional
 import logging
-from typing import List, Dict, Any, Optional
-import hashlib
-import random
-import string
+
+from utils.error_handler import safe_execute, handle_error, validate_input
+from utils.ui_components import UIComponents
 
 logger = logging.getLogger(__name__)
 
 
-class TeamManager:
-    """Team and user management"""
+class TaskManager:
+    """Task management functionality"""
 
     def __init__(self, db_manager):
         self.db = db_manager
+        self.ui = UIComponents()
 
-    def render_page(self):
-        """Render team management page"""
-        st.title("👥 จัดการทีมงาน")
+    def get_all_tasks(self, filters: Dict[str, Any] = None) -> List[Dict[str, Any]]:
+        """Get all tasks with optional filters"""
+        try:
+            query = """
+            SELECT t.TaskID, t.Title, t.Description, t.Status, t.Priority,
+                   t.CreatedDate, t.DueDate, t.StartDate, t.EndDate,
+                   t.EstimatedHours, t.ActualHours, t.CompletionPercentage,
+                   p.Name as ProjectName, p.ProjectID,
+                   assigned.FirstName + ' ' + assigned.LastName as AssignedToName,
+                   creator.FirstName + ' ' + creator.LastName as CreatedByName
+            FROM Tasks t
+            LEFT JOIN Projects p ON t.ProjectID = p.ProjectID
+            LEFT JOIN Users assigned ON t.AssignedToID = assigned.UserID
+            LEFT JOIN Users creator ON t.CreatedByID = creator.UserID
+            WHERE 1=1
+            """
 
-        # Control buttons
-        col1, col2, col3 = st.columns([2, 1, 1])
+            params = []
 
-        with col1:
-            st.subheader("สมาชิกทีม")
+            if filters:
+                if filters.get("status") and filters["status"] != "ทั้งหมด":
+                    query += " AND t.Status = ?"
+                    params.append(filters["status"])
 
-        with col2:
-            if st.button("👤 เพิ่มสมาชิก", use_container_width=True):
-                st.session_state.show_new_member = True
+                if filters.get("priority") and filters["priority"] != "ทั้งหมด":
+                    query += " AND t.Priority = ?"
+                    params.append(filters["priority"])
 
-        with col3:
-            if st.button("📊 รายงาน", use_container_width=True):
-                st.session_state.show_team_report = True
+                if filters.get("project_id"):
+                    query += " AND t.ProjectID = ?"
+                    params.append(filters["project_id"])
 
-        # New member form
-        if st.session_state.get("show_new_member", False):
-            self._render_new_member_form()
+                if filters.get("assigned_to_id"):
+                    query += " AND t.AssignedToID = ?"
+                    params.append(filters["assigned_to_id"])
 
-        # Team report
-        if st.session_state.get("show_team_report", False):
-            self._render_team_report()
+                if filters.get("overdue_only"):
+                    query += " AND t.DueDate < GETDATE() AND t.Status != 'Done'"
 
-        # Load and display team members
-        users = self.get_all_users()
+                if filters.get("my_tasks") and filters.get("user_id"):
+                    query += " AND (t.AssignedToID = ? OR t.CreatedByID = ?)"
+                    params.extend([filters["user_id"], filters["user_id"]])
 
-        if users:
-            self._render_team_overview(users)
-            self._render_team_list(users)
+            query += " ORDER BY t.DueDate ASC, t.Priority DESC"
+
+            return self.db.execute_query(query, tuple(params) if params else None)
+
+        except Exception as e:
+            logger.error(f"Error getting tasks: {e}")
+            return []
+
+    def get_task_by_id(self, task_id: int) -> Optional[Dict[str, Any]]:
+        """Get task by ID"""
+        try:
+            query = """
+            SELECT t.*, p.Name as ProjectName,
+                   assigned.FirstName + ' ' + assigned.LastName as AssignedToName,
+                   creator.FirstName + ' ' + creator.LastName as CreatedByName
+            FROM Tasks t
+            LEFT JOIN Projects p ON t.ProjectID = p.ProjectID
+            LEFT JOIN Users assigned ON t.AssignedToID = assigned.UserID
+            LEFT JOIN Users creator ON t.CreatedByID = creator.UserID
+            WHERE t.TaskID = ?
+            """
+
+            result = self.db.execute_query(query, (task_id,))
+            return result[0] if result else None
+
+        except Exception as e:
+            logger.error(f"Error getting task {task_id}: {e}")
+            return None
+
+    def create_task(self, task_data: Dict[str, Any]) -> bool:
+        """Create new task"""
+        try:
+            # Validate required fields
+            required_fields = ["Title", "ProjectID", "AssignedToID", "CreatedByID"]
+            for field in required_fields:
+                if not task_data.get(field):
+                    st.error(f"❌ กรุณากรอก {field}")
+                    return False
+
+            query = """
+            INSERT INTO Tasks (Title, Description, ProjectID, AssignedToID, Status,
+                             Priority, DueDate, EstimatedHours, CreatedByID)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """
+
+            params = (
+                task_data["Title"],
+                task_data.get("Description", ""),
+                task_data["ProjectID"],
+                task_data["AssignedToID"],
+                task_data.get("Status", "To Do"),
+                task_data.get("Priority", "Medium"),
+                task_data.get("DueDate"),
+                task_data.get("EstimatedHours", 0),
+                task_data["CreatedByID"],
+            )
+
+            rows_affected = self.db.execute_non_query(query, params)
+
+            if rows_affected > 0:
+                st.success("✅ สร้างงานสำเร็จ")
+                return True
+            else:
+                st.error("❌ ไม่สามารถสร้างงานได้")
+                return False
+
+        except Exception as e:
+            logger.error(f"Error creating task: {e}")
+            st.error(f"❌ เกิดข้อผิดพลาด: {e}")
+            return False
+
+    def update_task(self, task_id: int, task_data: Dict[str, Any]) -> bool:
+        """Update existing task"""
+        try:
+            query = """
+            UPDATE Tasks 
+            SET Title = ?, Description = ?, Status = ?, Priority = ?,
+                DueDate = ?, EstimatedHours = ?, ActualHours = ?,
+                CompletionPercentage = ?, UpdatedDate = GETDATE()
+            WHERE TaskID = ?
+            """
+
+            params = (
+                task_data["Title"],
+                task_data.get("Description", ""),
+                task_data["Status"],
+                task_data["Priority"],
+                task_data.get("DueDate"),
+                task_data.get("EstimatedHours", 0),
+                task_data.get("ActualHours", 0),
+                task_data.get("CompletionPercentage", 0),
+                task_id,
+            )
+
+            rows_affected = self.db.execute_non_query(query, params)
+
+            if rows_affected > 0:
+                st.success("✅ อัพเดทงานสำเร็จ")
+
+                # Auto-update status based on completion
+                completion = task_data.get("CompletionPercentage", 0)
+                if completion == 100 and task_data["Status"] != "Done":
+                    self.update_task_status(task_id, "Done")
+                elif completion > 0 and task_data["Status"] == "To Do":
+                    self.update_task_status(task_id, "In Progress")
+
+                return True
+            else:
+                st.error("❌ ไม่สามารถอัพเดทงานได้")
+                return False
+
+        except Exception as e:
+            logger.error(f"Error updating task: {e}")
+            st.error(f"❌ เกิดข้อผิดพลาด: {e}")
+            return False
+
+    def update_task_status(self, task_id: int, status: str) -> bool:
+        """Update task status"""
+        try:
+            # Update completion percentage based on status
+            completion_map = {
+                "To Do": 0,
+                "In Progress": 25,
+                "Review": 75,
+                "Testing": 90,
+                "Done": 100,
+            }
+
+            completion = completion_map.get(status, 0)
+
+            query = """
+            UPDATE Tasks 
+            SET Status = ?, CompletionPercentage = ?,
+                EndDate = CASE WHEN ? = 'Done' THEN GETDATE() ELSE EndDate END,
+                UpdatedDate = GETDATE()
+            WHERE TaskID = ?
+            """
+
+            rows_affected = self.db.execute_non_query(
+                query, (status, completion, status, task_id)
+            )
+            return rows_affected > 0
+
+        except Exception as e:
+            logger.error(f"Error updating task status: {e}")
+            return False
+
+    def delete_task(self, task_id: int) -> bool:
+        """Delete task"""
+        try:
+            query = "DELETE FROM Tasks WHERE TaskID = ?"
+            rows_affected = self.db.execute_non_query(query, (task_id,))
+
+            if rows_affected > 0:
+                st.success("✅ ลบงานสำเร็จ")
+                return True
+            else:
+                st.error("❌ ไม่สามารถลบงานได้")
+                return False
+
+        except Exception as e:
+            logger.error(f"Error deleting task: {e}")
+            st.error(f"❌ เกิดข้อผิดพลาด: {e}")
+            return False
+
+    def get_tasks_by_project(self, project_id: int) -> List[Dict[str, Any]]:
+        """Get tasks for specific project"""
+        return self.get_all_tasks({"project_id": project_id})
+
+    def get_tasks_by_user(self, user_id: int) -> List[Dict[str, Any]]:
+        """Get tasks assigned to specific user"""
+        return self.get_all_tasks({"assigned_to_id": user_id})
+
+    def get_overdue_tasks(self) -> List[Dict[str, Any]]:
+        """Get overdue tasks"""
+        return self.get_all_tasks({"overdue_only": True})
+
+    def get_task_statistics(self) -> Dict[str, Any]:
+        """Get task statistics"""
+        try:
+            query = """
+            SELECT 
+                COUNT(*) as total_tasks,
+                SUM(CASE WHEN Status = 'Done' THEN 1 ELSE 0 END) as completed_tasks,
+                SUM(CASE WHEN Status = 'In Progress' THEN 1 ELSE 0 END) as in_progress_tasks,
+                SUM(CASE WHEN DueDate < GETDATE() AND Status != 'Done' THEN 1 ELSE 0 END) as overdue_tasks,
+                AVG(CAST(CompletionPercentage as FLOAT)) as avg_completion
+            FROM Tasks
+            """
+
+            result = self.db.execute_query(query)
+            return result[0] if result else {}
+
+        except Exception as e:
+            logger.error(f"Error getting task statistics: {e}")
+            return {}
+
+    def get_total_tasks(self) -> int:
+        """Get total number of tasks"""
+        try:
+            query = "SELECT COUNT(*) as count FROM Tasks"
+            result = self.db.execute_query(query)
+            return result[0]["count"] if result else 0
+        except Exception as e:
+            logger.error(f"Error getting total tasks: {e}")
+            return 0
+
+    def get_active_tasks_count(self) -> int:
+        """Get number of active tasks"""
+        try:
+            query = "SELECT COUNT(*) as count FROM Tasks WHERE Status IN ('To Do', 'In Progress', 'Review', 'Testing')"
+            result = self.db.execute_query(query)
+            return result[0]["count"] if result else 0
+        except Exception as e:
+            logger.error(f"Error getting active tasks count: {e}")
+            return 0
+
+    def get_overdue_tasks_count(self) -> int:
+        """Get number of overdue tasks"""
+        try:
+            query = "SELECT COUNT(*) as count FROM Tasks WHERE DueDate < GETDATE() AND Status != 'Done'"
+            result = self.db.execute_query(query)
+            return result[0]["count"] if result else 0
+        except Exception as e:
+            logger.error(f"Error getting overdue tasks count: {e}")
+            return 0
+
+
+def show_tasks_page(task_manager: TaskManager, project_manager, user_manager):
+    """Show tasks management page"""
+    ui = UIComponents()
+
+    # Page header
+    ui.render_page_header("✅ จัดการงาน", "สร้าง มอบหมาย และติดตามงาน", "✅")
+
+    # Get current user
+    user_data = st.session_state.user_data
+
+    # Sidebar filters
+    with st.sidebar:
+        st.markdown("### 🔍 ตัวกรอง")
+
+        # View options
+        view_option = st.selectbox(
+            "มุมมอง", options=["ทั้งหมด", "งานของฉัน", "งานที่เลยกำหนด", "งานที่กำลังทำ"]
+        )
+
+        status_filter = st.selectbox(
+            "สถานะงาน",
+            options=["ทั้งหมด", "To Do", "In Progress", "Review", "Testing", "Done"],
+        )
+
+        priority_filter = st.selectbox(
+            "ระดับความสำคัญ", options=["ทั้งหมด", "Low", "Medium", "High", "Critical"]
+        )
+
+        # Get projects for filter
+        projects = safe_execute(project_manager.get_all_projects, default_return=[])
+        project_options = ["ทั้งหมด"] + [p["Name"] for p in projects]
+        project_filter = st.selectbox("โครงการ", options=project_options)
+
+        project_id = None
+        if project_filter != "ทั้งหมด":
+            selected_project = next(
+                (p for p in projects if p["Name"] == project_filter), None
+            )
+            if selected_project:
+                project_id = selected_project["ProjectID"]
+
+        # Get users for filter
+        users = safe_execute(user_manager.get_all_users, default_return=[])
+        user_options = ["ทั้งหมด"] + [f"{u['FirstName']} {u['LastName']}" for u in users]
+        assigned_filter = st.selectbox("ผู้รับผิดชอบ", options=user_options)
+
+        assigned_to_id = None
+        if assigned_filter != "ทั้งหมด":
+            selected_user = next(
+                (
+                    u
+                    for u in users
+                    if f"{u['FirstName']} {u['LastName']}" == assigned_filter
+                ),
+                None,
+            )
+            if selected_user:
+                assigned_to_id = selected_user["UserID"]
+
+    # Build filters
+    filters = {
+        "status": status_filter if status_filter != "ทั้งหมด" else None,
+        "priority": priority_filter if priority_filter != "ทั้งหมด" else None,
+        "project_id": project_id,
+        "assigned_to_id": assigned_to_id,
+    }
+
+    # Apply view-specific filters
+    if view_option == "งานของฉัน":
+        filters["my_tasks"] = True
+        filters["user_id"] = user_data["UserID"]
+    elif view_option == "งานที่เลยกำหนด":
+        filters["overdue_only"] = True
+    elif view_option == "งานที่กำลังทำ":
+        filters["status"] = "In Progress"
+
+    # Main content tabs
+    tab1, tab2, tab3, tab4 = st.tabs(
+        ["📋 รายการงาน", "➕ สร้างงานใหม่", "📊 สถิติงาน", "📈 แดชบอร์ดงาน"]
+    )
+
+    with tab1:
+        show_tasks_list(task_manager, filters)
+
+    with tab2:
+        if user_data["Role"] in ["Admin", "Project Manager", "Team Lead"]:
+            show_create_task_form(task_manager, project_manager, user_manager)
         else:
-            st.info("👥 ยังไม่มีสมาชิกทีม")
+            st.error("❌ คุณไม่มีสิทธิ์สร้างงาน")
 
-    def _render_new_member_form(self):
-        """Render new team member form"""
-        with st.expander("เพิ่มสมาชิกทีมใหม่", expanded=True):
-            with st.form("new_member_form"):
-                col1, col2 = st.columns(2)
+    with tab3:
+        show_task_statistics(task_manager)
 
-                with col1:
-                    username = st.text_input("ชื่อผู้ใช้ *", placeholder="username")
-                    first_name = st.text_input("ชื่อ *", placeholder="ชื่อจริง")
-                    email = st.text_input("อีเมล *", placeholder="email@company.com")
-                    phone = st.text_input("เบอร์โทร", placeholder="หมายเลขโทรศัพท์")
+    with tab4:
+        show_task_dashboard(task_manager, user_data)
 
-                with col2:
-                    password = st.text_input(
-                        "รหัสผ่าน *", type="password", placeholder="รหัสผ่านชั่วคราว"
-                    )
-                    last_name = st.text_input("นามสกุล *", placeholder="นามสกุล")
-                    department = st.selectbox(
-                        "แผนก",
-                        [
-                            "Engineering",
-                            "Marketing",
-                            "Sales",
-                            "HR",
-                            "Finance",
-                            "Operations",
-                            "IT",
-                            "Quality",
-                            "R&D",
-                            "Management",
-                            "Other",
-                        ],
-                    )
-                    role = st.selectbox("บทบาท", ["User", "Manager", "Admin"])
 
-                # Additional fields
-                col3, col4 = st.columns(2)
-                with col3:
-                    position = st.text_input("ตำแหน่งงาน", placeholder="ตำแหน่ง")
-                    hire_date = st.date_input("วันที่เริ่มงาน", value=datetime.now().date())
+def show_tasks_list(task_manager: TaskManager, filters: Dict[str, Any]):
+    """Show tasks list with actions"""
+    ui = UIComponents()
 
-                with col4:
-                    salary = st.number_input("เงินเดือน", min_value=0, value=0, step=1000)
-                    manager_id = st.selectbox("ผู้จัดการ", self._get_manager_options())
+    tasks = safe_execute(task_manager.get_all_tasks, filters, default_return=[])
 
-                col_submit, col_cancel = st.columns(2)
+    if not tasks:
+        st.info("ไม่มีงานที่ตรงกับเงื่อนไข")
+        return
 
-                with col_submit:
-                    submitted = st.form_submit_button(
-                        "➕ เพิ่มสมาชิก", use_container_width=True
-                    )
+    # Search functionality
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        search_term = st.text_input("🔍 ค้นหางาน", placeholder="ชื่องาน, รายละเอียด...")
 
-                with col_cancel:
-                    cancel = st.form_submit_button("❌ ยกเลิก", use_container_width=True)
+    # Filter tasks by search term
+    if search_term:
+        filtered_tasks = [
+            t
+            for t in tasks
+            if search_term.lower() in t["Title"].lower()
+            or (t["Description"] and search_term.lower() in t["Description"].lower())
+        ]
+    else:
+        filtered_tasks = tasks
 
-                if submitted:
-                    if not all([username, first_name, last_name, email, password]):
-                        st.error("❌ กรุณากรอกข้อมูลที่จำเป็นให้ครบถ้วน!")
-                    else:
-                        success = self.add_user(
-                            {
-                                "username": username,
-                                "password": password,
-                                "first_name": first_name,
-                                "last_name": last_name,
-                                "email": email,
-                                "phone": phone,
-                                "department": department,
-                                "role": role,
-                                "position": position,
-                                "hire_date": hire_date,
-                                "salary": salary,
-                                "manager_id": (
-                                    manager_id if manager_id != "ไม่มี" else None
-                                ),
-                            }
+    # Display tasks
+    for task in filtered_tasks:
+        with st.container():
+            col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
+
+            with col1:
+                st.markdown(f"### {task['Title']}")
+                st.markdown(f"**โครงการ:** {task.get('ProjectName', 'N/A')}")
+                st.markdown(f"**ผู้รับผิดชอบ:** {task.get('AssignedToName', 'N/A')}")
+                st.markdown(f"**สร้างโดย:** {task.get('CreatedByName', 'N/A')}")
+
+                if task.get("Description"):
+                    with st.expander("รายละเอียด"):
+                        st.markdown(task["Description"])
+
+                # Progress bar
+                completion = task.get("CompletionPercentage", 0)
+                ui.render_progress_bar(completion)
+
+            with col2:
+                st.markdown("**สถานะ**")
+                st.markdown(
+                    ui.render_status_badge(task["Status"]), unsafe_allow_html=True
+                )
+
+                st.markdown("**ความสำคัญ**")
+                st.markdown(
+                    ui.render_priority_badge(task["Priority"]), unsafe_allow_html=True
+                )
+
+            with col3:
+                st.markdown("**วันที่**")
+                if task["DueDate"]:
+                    due_date = task["DueDate"].date()
+                    st.markdown(f"กำหนดส่ง: {due_date.strftime('%d/%m/%Y')}")
+
+                    # Check if overdue
+                    if due_date < date.today() and task["Status"] != "Done":
+                        days_overdue = (date.today() - due_date).days
+                        st.markdown(
+                            f"<span style='color: red;'>เลยกำหนด {days_overdue} วัน</span>",
+                            unsafe_allow_html=True,
                         )
+                    else:
+                        days_remaining = (due_date - date.today()).days
+                        if days_remaining >= 0:
+                            st.markdown(f"เหลือ {days_remaining} วัน")
 
-                        if success:
-                            st.success("✅ เพิ่มสมาชิกเรียบร้อยแล้ว!")
-                            st.session_state.show_new_member = False
+                if task.get("EstimatedHours"):
+                    st.markdown(f"**ประมาณเวลา:** {task['EstimatedHours']} ชม.")
+                if task.get("ActualHours"):
+                    st.markdown(f"**เวลาจริง:** {task['ActualHours']} ชม.")
+
+            with col4:
+                user_data = st.session_state.user_data
+                can_edit = (
+                    user_data["Role"] in ["Admin", "Project Manager", "Team Lead"]
+                    or user_data["UserID"] == task.get("AssignedToID")
+                    or user_data["UserID"] == task.get("CreatedByID")
+                )
+
+                if can_edit:
+                    # Quick status update
+                    current_status = task["Status"]
+                    status_options = [
+                        "To Do",
+                        "In Progress",
+                        "Review",
+                        "Testing",
+                        "Done",
+                    ]
+
+                    new_status = st.selectbox(
+                        "เปลี่ยนสถานะ",
+                        options=status_options,
+                        index=status_options.index(current_status),
+                        key=f"status_{task['TaskID']}",
+                    )
+
+                    if new_status != current_status:
+                        if task_manager.update_task_status(task["TaskID"], new_status):
                             st.rerun()
-                        else:
-                            st.error("❌ เกิดข้อผิดพลาดในการเพิ่มสมาชิก")
 
-                if cancel:
-                    st.session_state.show_new_member = False
-                    st.rerun()
+                    if st.button("✏️ แก้ไข", key=f"edit_{task['TaskID']}"):
+                        st.session_state.edit_task_id = task["TaskID"]
 
-    def _render_team_overview(self, users: List[Dict]):
-        """Render team overview stats"""
-        st.subheader("📊 ภาพรวมทีม")
+                    if st.button("📊 รายละเอียด", key=f"detail_{task['TaskID']}"):
+                        st.session_state.view_task_id = task["TaskID"]
 
-        # Calculate stats
-        total_users = len(users)
-        active_users = len([u for u in users if u.get("IsActive", True)])
-        departments = list(set([u.get("Department", "Unknown") for u in users]))
-        roles = list(set([u.get("Role", "User") for u in users]))
+                if user_data["Role"] in ["Admin", "Project Manager"]:
+                    if st.button("🗑️ ลบ", key=f"delete_{task['TaskID']}"):
+                        if ui.render_confirmation_dialog(
+                            f"ต้องการลบงาน '{task['Title']}' หรือไม่?",
+                            f"delete_task_{task['TaskID']}",
+                        ):
+                            task_manager.delete_task(task["TaskID"])
+                            st.rerun()
 
-        # Display metrics
-        col1, col2, col3, col4 = st.columns(4)
+            st.markdown("---")
 
-        with col1:
-            st.metric("👥 สมาชิกทั้งหมด", total_users)
+    # Handle edit task
+    if "edit_task_id" in st.session_state:
+        show_edit_task_modal(
+            task_manager, st.session_state.edit_task_id, project_manager, user_manager
+        )
 
-        with col2:
-            st.metric("✅ ใช้งานอยู่", active_users)
+    # Handle view task details
+    if "view_task_id" in st.session_state:
+        show_task_details_modal(task_manager, st.session_state.view_task_id)
 
-        with col3:
-            st.metric("🏢 แผนก", len(departments))
 
-        with col4:
-            st.metric("👤 บทบาท", len(roles))
+def show_create_task_form(task_manager: TaskManager, project_manager, user_manager):
+    """Show create task form"""
+    with st.form("create_task_form"):
+        st.subheader("➕ สร้างงานใหม่")
 
-        # Charts
         col1, col2 = st.columns(2)
 
         with col1:
-            # Department distribution
-            dept_data = pd.DataFrame(users)
-            if not dept_data.empty and "Department" in dept_data.columns:
-                dept_counts = dept_data["Department"].value_counts()
-                fig = px.pie(
-                    values=dept_counts.values,
-                    names=dept_counts.index,
-                    title="การกระจายตามแผนก",
+            title = st.text_input("ชื่องาน *", placeholder="ชื่องาน")
+
+            # Get projects
+            projects = safe_execute(project_manager.get_all_projects, default_return=[])
+            project_options = {
+                p["Name"]: p["ProjectID"]
+                for p in projects
+                if p["Status"] != "Cancelled"
+            }
+
+            if project_options:
+                selected_project = st.selectbox(
+                    "โครงการ *", options=list(project_options.keys())
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                project_id = project_options[selected_project]
+            else:
+                st.error("ไม่พบโครงการที่ใช้งานได้")
+                project_id = None
+
+            status = st.selectbox("สถานะ", options=["To Do", "In Progress", "Review"])
+            due_date = st.date_input("วันกำหนดส่ง")
 
         with col2:
-            # Role distribution
-            if not dept_data.empty and "Role" in dept_data.columns:
-                role_counts = dept_data["Role"].value_counts()
-                fig = px.bar(
-                    x=role_counts.index, y=role_counts.values, title="การกระจายตามบทบาท"
+            # Get users for assignment
+            users = safe_execute(user_manager.get_all_users, default_return=[])
+            user_options = {
+                f"{u['FirstName']} {u['LastName']}": u["UserID"]
+                for u in users
+                if u["IsActive"]
+            }
+
+            if user_options:
+                selected_user = st.selectbox(
+                    "ผู้รับผิดชอบ *", options=list(user_options.keys())
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                assigned_to_id = user_options[selected_user]
+            else:
+                st.error("ไม่พบผู้ใช้ที่สามารถมอบหมายได้")
+                assigned_to_id = None
 
-    def _render_team_list(self, users: List[Dict]):
-        """Render team members list"""
-        st.subheader("📋 รายชื่อสมาชิก")
-
-        # Search and filter
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-            search_term = st.text_input("🔍 ค้นหา", placeholder="ชื่อ, อีเมล, แผนก...")
-
-        with col2:
-            dept_filter = st.selectbox(
-                "แผนก",
-                ["ทั้งหมด"] + list(set([u.get("Department", "Unknown") for u in users])),
+            priority = st.selectbox(
+                "ระดับความสำคัญ", options=["Low", "Medium", "High", "Critical"]
+            )
+            estimated_hours = st.number_input(
+                "ประมาณเวลา (ชั่วโมง)", min_value=0.0, value=0.0, step=0.5
             )
 
-        with col3:
-            role_filter = st.selectbox(
-                "บทบาท", ["ทั้งหมด"] + list(set([u.get("Role", "User") for u in users]))
-            )
+        description = st.text_area(
+            "รายละเอียดงาน", height=100, placeholder="อธิบายรายละเอียดและเป้าหมายของงาน"
+        )
 
-        # Filter users
-        filtered_users = users
+        if st.form_submit_button("✅ สร้างงาน", type="primary"):
+            user_data = st.session_state.user_data
 
-        if search_term:
-            filtered_users = [
-                u
-                for u in filtered_users
-                if search_term.lower()
-                in f"{u.get('FirstName', '')} {u.get('LastName', '')} {u.get('Email', '')} {u.get('Department', '')}".lower()
-            ]
+            if title and project_id and assigned_to_id:
+                task_data = {
+                    "Title": title,
+                    "Description": description,
+                    "ProjectID": project_id,
+                    "AssignedToID": assigned_to_id,
+                    "Status": status,
+                    "Priority": priority,
+                    "DueDate": due_date if due_date else None,
+                    "EstimatedHours": estimated_hours,
+                    "CreatedByID": user_data["UserID"],
+                }
 
-        if dept_filter != "ทั้งหมด":
-            filtered_users = [
-                u for u in filtered_users if u.get("Department") == dept_filter
-            ]
-
-        if role_filter != "ทั้งหมด":
-            filtered_users = [u for u in filtered_users if u.get("Role") == role_filter]
-
-        # Display users
-        for user in filtered_users:
-            with st.container():
-                col1, col2, col3, col4, col5 = st.columns([3, 2, 2, 2, 1])
-
-                with col1:
-                    status_icon = "✅" if user.get("IsActive", True) else "❌"
-                    st.write(
-                        f"{status_icon} **{user.get('FirstName', '')} {user.get('LastName', '')}**"
-                    )
-                    st.caption(f"@{user.get('Username', '')} • {user.get('Email', '')}")
-
-                with col2:
-                    st.write(f"🏢 {user.get('Department', 'N/A')}")
-                    st.caption(f"📍 {user.get('Position', 'N/A')}")
-
-                with col3:
-                    st.write(f"👤 {user.get('Role', 'User')}")
-                    if user.get("LastLogin"):
-                        last_login = user["LastLogin"]
-                        if isinstance(last_login, str):
-                            last_login = datetime.fromisoformat(
-                                last_login.replace("Z", "+00:00")
-                            )
-                        st.caption(f"🕐 {last_login.strftime('%d/%m/%Y')}")
-
-                with col4:
-                    if user.get("HireDate"):
-                        hire_date = user["HireDate"]
-                        if isinstance(hire_date, str):
-                            hire_date = datetime.fromisoformat(hire_date).date()
-                        st.write(f"📅 {hire_date.strftime('%d/%m/%Y')}")
-
-                    if user.get("Phone"):
-                        st.caption(f"📱 {user['Phone']}")
-
-                with col5:
-                    if st.button("✏️", key=f"edit_{user.get('UserID')}", help="แก้ไข"):
-                        st.session_state.edit_user_id = user.get("UserID")
-                        st.session_state.show_edit_user = True
-
-                st.divider()
-
-        if not filtered_users:
-            st.info("🔍 ไม่พบสมาชิกที่ตรงกับเงื่อนไขการค้นหา")
-
-        # Edit user modal
-        if st.session_state.get("show_edit_user", False):
-            self._render_edit_user_modal()
-
-    def _render_edit_user_modal(self):
-        """Render edit user modal"""
-        user_id = st.session_state.get("edit_user_id")
-        if not user_id:
-            return
-
-        user = self.get_user_by_id(user_id)
-        if not user:
-            st.error("ไม่พบข้อมูลผู้ใช้")
-            return
-
-        with st.expander(
-            f"แก้ไขข้อมูล: {user.get('FirstName')} {user.get('LastName')}", expanded=True
-        ):
-            with st.form("edit_user_form"):
-                col1, col2 = st.columns(2)
-
-                with col1:
-                    first_name = st.text_input("ชื่อ", value=user.get("FirstName", ""))
-                    email = st.text_input("อีเมล", value=user.get("Email", ""))
-                    department = st.selectbox(
-                        "แผนก",
-                        [
-                            "Engineering",
-                            "Marketing",
-                            "Sales",
-                            "HR",
-                            "Finance",
-                            "Operations",
-                            "IT",
-                            "Quality",
-                            "R&D",
-                            "Management",
-                            "Other",
-                        ],
-                        index=(
-                            [
-                                "Engineering",
-                                "Marketing",
-                                "Sales",
-                                "HR",
-                                "Finance",
-                                "Operations",
-                                "IT",
-                                "Quality",
-                                "R&D",
-                                "Management",
-                                "Other",
-                            ].index(user.get("Department", "Other"))
-                            if user.get("Department")
-                            in [
-                                "Engineering",
-                                "Marketing",
-                                "Sales",
-                                "HR",
-                                "Finance",
-                                "Operations",
-                                "IT",
-                                "Quality",
-                                "R&D",
-                                "Management",
-                                "Other",
-                            ]
-                            else 10
-                        ),
-                    )
-                    is_active = st.checkbox("ใช้งานอยู่", value=user.get("IsActive", True))
-
-                with col2:
-                    last_name = st.text_input("นามสกุล", value=user.get("LastName", ""))
-                    phone = st.text_input("เบอร์โทร", value=user.get("Phone", ""))
-                    role = st.selectbox(
-                        "บทบาท",
-                        ["User", "Manager", "Admin"],
-                        index=(
-                            ["User", "Manager", "Admin"].index(user.get("Role", "User"))
-                            if user.get("Role") in ["User", "Manager", "Admin"]
-                            else 0
-                        ),
-                    )
-                    position = st.text_input("ตำแหน่ง", value=user.get("Position", ""))
-
-                col_save, col_cancel, col_delete = st.columns(3)
-
-                with col_save:
-                    save = st.form_submit_button("💾 บันทึก", use_container_width=True)
-
-                with col_cancel:
-                    cancel = st.form_submit_button("❌ ยกเลิก", use_container_width=True)
-
-                with col_delete:
-                    delete = st.form_submit_button("🗑️ ลบ", use_container_width=True)
-
-                if save:
-                    update_data = {
-                        "first_name": first_name,
-                        "last_name": last_name,
-                        "email": email,
-                        "phone": phone,
-                        "department": department,
-                        "role": role,
-                        "position": position,
-                        "is_active": is_active,
-                    }
-
-                    if self.update_user(user_id, update_data):
-                        st.success("✅ อัปเดตข้อมูลเรียบร้อยแล้ว!")
-                        st.session_state.show_edit_user = False
-                        st.rerun()
-                    else:
-                        st.error("❌ เกิดข้อผิดพลาดในการอัปเดต")
-
-                if cancel:
-                    st.session_state.show_edit_user = False
+                if task_manager.create_task(task_data):
                     st.rerun()
+            else:
+                st.error("❌ กรุณากรอกข้อมูลที่จำเป็น (*)")
 
-                if delete:
-                    if st.session_state.get("confirm_delete", False):
-                        if self.delete_user(user_id):
-                            st.success("✅ ลบผู้ใช้เรียบร้อยแล้ว!")
-                            st.session_state.show_edit_user = False
-                            st.session_state.confirm_delete = False
-                            st.rerun()
-                        else:
-                            st.error("❌ เกิดข้อผิดพลาดในการลบ")
-                    else:
-                        st.session_state.confirm_delete = True
-                        st.warning("⚠️ คลิกลบอีกครั้งเพื่อยืนยัน")
 
-    def _render_team_report(self):
-        """Render team analytics report"""
-        with st.expander("📊 รายงานทีมงาน", expanded=True):
-            users = self.get_all_users()
+def show_edit_task_modal(
+    task_manager: TaskManager, task_id: int, project_manager, user_manager
+):
+    """Show edit task modal"""
+    task = safe_execute(task_manager.get_task_by_id, task_id, default_return=None)
 
-            if not users:
-                st.info("ไม่มีข้อมูลสำหรับสร้างรายงาน")
-                return
+    if not task:
+        st.error("ไม่พบงาน")
+        return
 
-            df = pd.DataFrame(users)
-
-            # Team growth over time
-            if "CreatedDate" in df.columns:
-                df["CreatedDate"] = pd.to_datetime(df["CreatedDate"])
-                growth_data = df.groupby(df["CreatedDate"].dt.date).size().cumsum()
-
-                fig = px.line(
-                    x=growth_data.index,
-                    y=growth_data.values,
-                    title="การเติบโตของทีมงาน",
-                    labels={"x": "วันที่", "y": "จำนวนสมาชิก"},
-                )
-                st.plotly_chart(fig, use_container_width=True)
-
-            # Department analysis
+    with st.expander(f"✏️ แก้ไขงาน: {task['Title']}", expanded=True):
+        with st.form(f"edit_task_form_{task_id}"):
             col1, col2 = st.columns(2)
 
             with col1:
-                if "Department" in df.columns:
-                    dept_stats = df["Department"].value_counts()
-                    st.subheader("สถิติตามแผนก")
-                    for dept, count in dept_stats.items():
-                        st.write(f"• **{dept}**: {count} คน")
+                title = st.text_input("ชื่องาน", value=task["Title"])
+                status = st.selectbox(
+                    "สถานะ",
+                    options=["To Do", "In Progress", "Review", "Testing", "Done"],
+                    index=["To Do", "In Progress", "Review", "Testing", "Done"].index(
+                        task["Status"]
+                    ),
+                )
+                due_date = st.date_input(
+                    "วันกำหนดส่ง",
+                    value=task["DueDate"].date() if task["DueDate"] else None,
+                )
+                estimated_hours = st.number_input(
+                    "ประมาณเวลา (ชั่วโมง)", value=float(task.get("EstimatedHours", 0))
+                )
 
             with col2:
-                if "Role" in df.columns:
-                    role_stats = df["Role"].value_counts()
-                    st.subheader("สถิติตามบทบาท")
-                    for role, count in role_stats.items():
-                        st.write(f"• **{role}**: {count} คน")
-
-            # Export button
-            if st.button("📁 ส่งออกรายงาน", use_container_width=True):
-                csv = df.to_csv(index=False)
-                st.download_button(
-                    label="⬇️ ดาวน์โหลด CSV",
-                    data=csv,
-                    file_name=f"team_report_{datetime.now().strftime('%Y%m%d')}.csv",
-                    mime="text/csv",
+                priority = st.selectbox(
+                    "ระดับความสำคัญ",
+                    options=["Low", "Medium", "High", "Critical"],
+                    index=["Low", "Medium", "High", "Critical"].index(task["Priority"]),
+                )
+                actual_hours = st.number_input(
+                    "เวลาจริง (ชั่วโมง)", value=float(task.get("ActualHours", 0))
+                )
+                completion = st.slider(
+                    "ความคืบหน้า (%)", 0, 100, value=task.get("CompletionPercentage", 0)
                 )
 
-            if st.button("❌ ปิดรายงาน", use_container_width=True):
-                st.session_state.show_team_report = False
-                st.rerun()
-
-    def get_all_users(self) -> List[Dict]:
-        """Get all users from database"""
-        try:
-            query = """
-            SELECT 
-                UserID, Username, FirstName, LastName, Email, Phone,
-                Department, Role, Position, HireDate, Salary, ManagerID,
-                IsActive, LastLogin, CreatedDate, UpdatedDate
-            FROM Users
-            ORDER BY FirstName, LastName
-            """
-            results = self.db.fetch_all(query)
-            return [dict(row) for row in results] if results else []
-        except Exception as e:
-            logger.error(f"Error fetching users: {e}")
-            return []
-
-    def get_user_by_id(self, user_id: int) -> Optional[Dict]:
-        """Get user by ID"""
-        try:
-            query = """
-            SELECT 
-                UserID, Username, FirstName, LastName, Email, Phone,
-                Department, Role, Position, HireDate, Salary, ManagerID,
-                IsActive, LastLogin, CreatedDate, UpdatedDate
-            FROM Users
-            WHERE UserID = ?
-            """
-            result = self.db.fetch_one(query, (user_id,))
-            return dict(result) if result else None
-        except Exception as e:
-            logger.error(f"Error fetching user {user_id}: {e}")
-            return None
-
-    def add_user(self, user_data: Dict) -> bool:
-        """Add new user to database"""
-        try:
-            # Check if username or email already exists
-            check_query = """
-            SELECT COUNT(*) as count FROM Users 
-            WHERE Username = ? OR Email = ?
-            """
-            existing = self.db.fetch_one(
-                check_query, (user_data["username"], user_data["email"])
+            description = st.text_area(
+                "รายละเอียดงาน", value=task.get("Description", "")
             )
 
-            if existing and existing["count"] > 0:
-                st.error("❌ ชื่อผู้ใช้หรืออีเมลนี้มีอยู่ในระบบแล้ว")
-                return False
+            col1, col2 = st.columns(2)
 
-            # Hash password
-            password_hash = self._hash_password(user_data["password"])
-
-            # Insert new user
-            insert_query = """
-            INSERT INTO Users (
-                Username, PasswordHash, FirstName, LastName, Email, Phone,
-                Department, Role, Position, HireDate, Salary, ManagerID,
-                IsActive, CreatedDate, UpdatedDate
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-            """
-
-            values = (
-                user_data["username"],
-                password_hash,
-                user_data["first_name"],
-                user_data["last_name"],
-                user_data["email"],
-                user_data.get("phone", ""),
-                user_data["department"],
-                user_data["role"],
-                user_data.get("position", ""),
-                user_data.get("hire_date", datetime.now().date()),
-                user_data.get("salary", 0),
-                user_data.get("manager_id"),
-                datetime.now(),
-                datetime.now(),
-            )
-
-            self.db.execute_query(insert_query, values)
-            logger.info(f"User {user_data['username']} added successfully")
-            return True
-
-        except Exception as e:
-            logger.error(f"Error adding user: {e}")
-            return False
-
-    def update_user(self, user_id: int, user_data: Dict) -> bool:
-        """Update user information"""
-        try:
-            update_query = """
-            UPDATE Users SET
-                FirstName = ?, LastName = ?, Email = ?, Phone = ?,
-                Department = ?, Role = ?, Position = ?, IsActive = ?,
-                UpdatedDate = ?
-            WHERE UserID = ?
-            """
-
-            values = (
-                user_data["first_name"],
-                user_data["last_name"],
-                user_data["email"],
-                user_data.get("phone", ""),
-                user_data["department"],
-                user_data["role"],
-                user_data.get("position", ""),
-                user_data.get("is_active", True),
-                datetime.now(),
-                user_id,
-            )
-
-            self.db.execute_query(update_query, values)
-            logger.info(f"User {user_id} updated successfully")
-            return True
-
-        except Exception as e:
-            logger.error(f"Error updating user {user_id}: {e}")
-            return False
-
-    def delete_user(self, user_id: int) -> bool:
-        """Delete user (soft delete by setting IsActive = False)"""
-        try:
-            # Soft delete - just deactivate the user
-            update_query = """
-            UPDATE Users SET
-                IsActive = 0,
-                UpdatedDate = ?
-            WHERE UserID = ?
-            """
-
-            self.db.execute_query(update_query, (datetime.now(), user_id))
-            logger.info(f"User {user_id} deactivated successfully")
-            return True
-
-        except Exception as e:
-            logger.error(f"Error deleting user {user_id}: {e}")
-            return False
-
-    def get_user_statistics(self) -> Dict[str, Any]:
-        """Get user statistics"""
-        try:
-            stats = {}
-
-            # Total users
-            total_query = "SELECT COUNT(*) as count FROM Users"
-            total_result = self.db.fetch_one(total_query)
-            stats["total_users"] = total_result["count"] if total_result else 0
-
-            # Active users
-            active_query = "SELECT COUNT(*) as count FROM Users WHERE IsActive = 1"
-            active_result = self.db.fetch_one(active_query)
-            stats["active_users"] = active_result["count"] if active_result else 0
-
-            # Users by department
-            dept_query = """
-            SELECT Department, COUNT(*) as count 
-            FROM Users 
-            WHERE IsActive = 1 
-            GROUP BY Department
-            """
-            dept_results = self.db.fetch_all(dept_query)
-            stats["departments"] = (
-                {row["Department"]: row["count"] for row in dept_results}
-                if dept_results
-                else {}
-            )
-
-            # Users by role
-            role_query = """
-            SELECT Role, COUNT(*) as count 
-            FROM Users 
-            WHERE IsActive = 1 
-            GROUP BY Role
-            """
-            role_results = self.db.fetch_all(role_query)
-            stats["roles"] = (
-                {row["Role"]: row["count"] for row in role_results}
-                if role_results
-                else {}
-            )
-
-            # Recent logins (last 30 days)
-            recent_query = """
-            SELECT COUNT(*) as count 
-            FROM Users 
-            WHERE LastLogin >= ? AND IsActive = 1
-            """
-            thirty_days_ago = datetime.now() - timedelta(days=30)
-            recent_result = self.db.fetch_one(recent_query, (thirty_days_ago,))
-            stats["recent_logins"] = recent_result["count"] if recent_result else 0
-
-            return stats
-
-        except Exception as e:
-            logger.error(f"Error getting user statistics: {e}")
-            return {}
-
-    def get_team_performance_metrics(self) -> Dict[str, Any]:
-        """Get team performance metrics"""
-        try:
-            metrics = {}
-
-            # Task completion rate by user
-            task_query = """
-            SELECT 
-                u.FirstName + ' ' + u.LastName as FullName,
-                COUNT(t.TaskID) as TotalTasks,
-                SUM(CASE WHEN t.Status = 'Completed' THEN 1 ELSE 0 END) as CompletedTasks
-            FROM Users u
-            LEFT JOIN Tasks t ON u.UserID = t.AssignedTo
-            WHERE u.IsActive = 1
-            GROUP BY u.UserID, u.FirstName, u.LastName
-            """
-            task_results = self.db.fetch_all(task_query)
-
-            user_performance = []
-            for row in task_results:
-                total = row["TotalTasks"]
-                completed = row["CompletedTasks"]
-                completion_rate = (completed / total * 100) if total > 0 else 0
-
-                user_performance.append(
-                    {
-                        "name": row["FullName"],
-                        "total_tasks": total,
-                        "completed_tasks": completed,
-                        "completion_rate": completion_rate,
+            with col1:
+                if st.form_submit_button("✅ บันทึกการแก้ไข", type="primary"):
+                    updated_data = {
+                        "Title": title,
+                        "Description": description,
+                        "Status": status,
+                        "Priority": priority,
+                        "DueDate": due_date,
+                        "EstimatedHours": estimated_hours,
+                        "ActualHours": actual_hours,
+                        "CompletionPercentage": completion,
                     }
-                )
 
-            metrics["user_performance"] = user_performance
+                    if task_manager.update_task(task_id, updated_data):
+                        del st.session_state.edit_task_id
+                        st.rerun()
 
-            # Department productivity
-            dept_query = """
-            SELECT 
-                u.Department,
-                COUNT(t.TaskID) as TotalTasks,
-                SUM(CASE WHEN t.Status = 'Completed' THEN 1 ELSE 0 END) as CompletedTasks,
-                AVG(DATEDIFF(day, t.CreatedDate, t.CompletedDate)) as AvgCompletionDays
-            FROM Users u
-            LEFT JOIN Tasks t ON u.UserID = t.AssignedTo
-            WHERE u.IsActive = 1
-            GROUP BY u.Department
-            """
-            dept_results = self.db.fetch_all(dept_query)
+            with col2:
+                if st.form_submit_button("❌ ยกเลิก"):
+                    del st.session_state.edit_task_id
+                    st.rerun()
 
-            dept_productivity = []
-            for row in dept_results:
-                total = row["TotalTasks"]
-                completed = row["CompletedTasks"]
-                completion_rate = (completed / total * 100) if total > 0 else 0
-                avg_days = row["AvgCompletionDays"] or 0
 
-                dept_productivity.append(
-                    {
-                        "department": row["Department"],
-                        "total_tasks": total,
-                        "completed_tasks": completed,
-                        "completion_rate": completion_rate,
-                        "avg_completion_days": avg_days,
-                    }
-                )
+def show_task_details_modal(task_manager: TaskManager, task_id: int):
+    """Show task details modal"""
+    task = safe_execute(task_manager.get_task_by_id, task_id, default_return=None)
 
-            metrics["department_productivity"] = dept_productivity
+    if not task:
+        st.error("ไม่พบงาน")
+        return
 
-            return metrics
+    with st.expander(f"📊 รายละเอียดงาน: {task['Title']}", expanded=True):
+        ui = UIComponents()
 
-        except Exception as e:
-            logger.error(f"Error getting team performance metrics: {e}")
-            return {}
+        # Basic info
+        col1, col2, col3 = st.columns(3)
 
-    def _get_manager_options(self) -> List[str]:
-        """Get list of potential managers"""
-        try:
-            query = """
-            SELECT CONCAT(FirstName, ' ', LastName) as FullName
-            FROM Users 
-            WHERE Role IN ('Manager', 'Admin') AND IsActive = 1
-            ORDER BY FirstName, LastName
-            """
-            results = self.db.fetch_all(query)
-            managers = [row["FullName"] for row in results] if results else []
-            return ["ไม่มี"] + managers
-        except Exception as e:
-            logger.error(f"Error getting managers: {e}")
-            return ["ไม่มี"]
-
-    def _hash_password(self, password: str) -> str:
-        """Hash password using SHA-256"""
-        return hashlib.sha256(password.encode()).hexdigest()
-
-    def _generate_random_password(self, length: int = 12) -> str:
-        """Generate random password"""
-        characters = string.ascii_letters + string.digits + "!@#$%^&*"
-        return "".join(random.choice(characters) for _ in range(length))
-
-    def reset_user_password(
-        self, user_id: int, new_password: str = None
-    ) -> tuple[bool, str]:
-        """Reset user password"""
-        try:
-            if not new_password:
-                new_password = self._generate_random_password()
-
-            password_hash = self._hash_password(new_password)
-
-            update_query = """
-            UPDATE Users SET
-                PasswordHash = ?,
-                UpdatedDate = ?,
-                FailedLoginAttempts = 0,
-                IsLocked = 0
-            WHERE UserID = ?
-            """
-
-            self.db.execute_query(
-                update_query, (password_hash, datetime.now(), user_id)
+        with col1:
+            st.markdown("### ข้อมูลพื้นฐาน")
+            st.markdown(f"**ชื่องาน:** {task['Title']}")
+            st.markdown(f"**โครงการ:** {task.get('ProjectName', 'N/A')}")
+            st.markdown(f"**ผู้รับผิดชอบ:** {task.get('AssignedToName', 'N/A')}")
+            st.markdown(f"**สร้างโดย:** {task.get('CreatedByName', 'N/A')}")
+            st.markdown(
+                f"**สถานะ:** {ui.render_status_badge(task['Status'])}",
+                unsafe_allow_html=True,
             )
-            logger.info(f"Password reset for user {user_id}")
-            return True, new_password
+            st.markdown(
+                f"**ความสำคัญ:** {ui.render_priority_badge(task['Priority'])}",
+                unsafe_allow_html=True,
+            )
 
-        except Exception as e:
-            logger.error(f"Error resetting password for user {user_id}: {e}")
-            return False, ""
+        with col2:
+            st.markdown("### ข้อมูลเวลา")
+            if task["CreatedDate"]:
+                st.markdown(f"**วันที่สร้าง:** {task['CreatedDate'].strftime('%d/%m/%Y')}")
+            if task["DueDate"]:
+                st.markdown(f"**กำหนดส่ง:** {task['DueDate'].strftime('%d/%m/%Y')}")
+                days_remaining = (task["DueDate"].date() - date.today()).days
+                if days_remaining < 0:
+                    st.markdown(f"**สถานะ:** เลยกำหนด {abs(days_remaining)} วัน")
+                else:
+                    st.markdown(f"**เหลือเวลา:** {days_remaining} วัน")
 
-    def export_team_data(self, format_type: str = "csv") -> str:
-        """Export team data in specified format"""
-        try:
-            users = self.get_all_users()
+            if task.get("EstimatedHours"):
+                st.markdown(f"**ประมาณเวลา:** {task['EstimatedHours']} ชม.")
+            if task.get("ActualHours"):
+                st.markdown(f"**เวลาจริง:** {task['ActualHours']} ชม.")
+                if task.get("EstimatedHours", 0) > 0:
+                    variance = (
+                        (task["ActualHours"] - task["EstimatedHours"])
+                        / task["EstimatedHours"]
+                    ) * 100
+                    st.markdown(f"**ส่วนต่าง:** {variance:+.1f}%")
 
-            if not users:
-                return ""
+        with col3:
+            st.markdown("### ความคืบหน้า")
+            completion = task.get("CompletionPercentage", 0)
+            ui.render_progress_bar(completion)
 
-            df = pd.DataFrame(users)
+            if task["StartDate"]:
+                st.markdown(f"**เริ่มต้น:** {task['StartDate'].strftime('%d/%m/%Y')}")
+            if task["EndDate"]:
+                st.markdown(f"**สิ้นสุด:** {task['EndDate'].strftime('%d/%m/%Y')}")
 
-            # Remove sensitive columns
-            sensitive_cols = ["PasswordHash", "Salary"]
-            for col in sensitive_cols:
-                if col in df.columns:
-                    df = df.drop(columns=[col])
+        # Description
+        if task.get("Description"):
+            st.markdown("### รายละเอียด")
+            st.markdown(task["Description"])
 
-            if format_type.lower() == "csv":
-                return df.to_csv(index=False)
-            elif format_type.lower() == "json":
-                return df.to_json(orient="records", indent=2)
-            else:
-                return df.to_string(index=False)
+        if st.button("❌ ปิด", key=f"close_task_detail_{task_id}"):
+            del st.session_state.view_task_id
+            st.rerun()
 
-        except Exception as e:
-            logger.error(f"Error exporting team data: {e}")
-            return ""
+
+def show_task_statistics(task_manager: TaskManager):
+    """Show task statistics and charts"""
+    ui = UIComponents()
+
+    st.subheader("📊 สถิติงาน")
+
+    # Get task statistics
+    stats = safe_execute(task_manager.get_task_statistics, default_return={})
+
+    if not stats or stats.get("total_tasks", 0) == 0:
+        st.info("ไม่มีข้อมูลงาน")
+        return
+
+    # Key metrics
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        total_tasks = stats.get("total_tasks", 0)
+        st.metric("งานทั้งหมด", total_tasks)
+
+    with col2:
+        completed_tasks = stats.get("completed_tasks", 0)
+        completion_rate = (
+            (completed_tasks / total_tasks * 100) if total_tasks > 0 else 0
+        )
+        st.metric("งานเสร็จแล้ว", completed_tasks, f"{completion_rate:.1f}%")
+
+    with col3:
+        in_progress_tasks = stats.get("in_progress_tasks", 0)
+        st.metric("งานที่กำลังทำ", in_progress_tasks)
+
+    with col4:
+        overdue_tasks = stats.get("overdue_tasks", 0)
+        st.metric(
+            "งานเลยกำหนด",
+            overdue_tasks,
+            delta=f"-{overdue_tasks}" if overdue_tasks > 0 else None,
+        )
+
+    # Get all tasks for detailed analysis
+    all_tasks = safe_execute(task_manager.get_all_tasks, default_return=[])
+
+    if not all_tasks:
+        return
+
+    df = pd.DataFrame(all_tasks)
+
+    # Charts
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.subheader("การกระจายสถานะงาน")
+        if len(df) > 0:
+            status_counts = df["Status"].value_counts()
+            fig = px.pie(
+                values=status_counts.values,
+                names=status_counts.index,
+                title="สถานะงาน",
+                color_discrete_sequence=px.colors.qualitative.Set3,
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+    with col2:
+        st.subheader("การกระจายความสำคัญ")
+        if len(df) > 0:
+            priority_counts = df["Priority"].value_counts()
+            colors = {
+                "Low": "#28a745",
+                "Medium": "#ffc107",
+                "High": "#fd7e14",
+                "Critical": "#dc3545",
+            }
+            fig = px.bar(
+                x=priority_counts.index,
+                y=priority_counts.values,
+                title="ระดับความสำคัญของงาน",
+                color=priority_counts.index,
+                color_discrete_map=colors,
+            )
+            fig.update_layout(xaxis_title="ความสำคัญ", yaxis_title="จำนวน")
+            st.plotly_chart(fig, use_container_width=True)
+
+    # Task completion timeline
+    st.subheader("Timeline งาน")
+    if len(df) > 0 and "DueDate" in df.columns:
+        # Filter tasks with due dates
+        timeline_df = df.dropna(subset=["DueDate"]).copy()
+
+        if len(timeline_df) > 0:
+            # Add status for coloring
+            timeline_df["DueDateOnly"] = timeline_df["DueDate"].dt.date
+            timeline_df["IsOverdue"] = (timeline_df["DueDateOnly"] < date.today()) & (
+                timeline_df["Status"] != "Done"
+            )
+
+            # Create timeline chart
+            fig = px.timeline(
+                timeline_df.head(20),  # Show only first 20 for readability
+                x_start="CreatedDate",
+                x_end="DueDate",
+                y="Title",
+                color="Status",
+                title="Timeline งาน (20 งานแรก)",
+                hover_data=["Priority", "AssignedToName"],
+            )
+
+            fig.update_layout(height=max(400, len(timeline_df.head(20)) * 30))
+            st.plotly_chart(fig, use_container_width=True)
+
+    # Workload analysis
+    st.subheader("การวิเคราะห์ปริมาณงาน")
+    if len(df) > 0 and "AssignedToName" in df.columns:
+        col1, col2 = st.columns(2)
+
+        with col1:
+            # Tasks by assignee
+            assignee_counts = df["AssignedToName"].value_counts().head(10)
+            fig = px.bar(
+                x=assignee_counts.values,
+                y=assignee_counts.index,
+                orientation="h",
+                title="งานตามผู้รับผิดชอบ (10 อันดับแรก)",
+            )
+            fig.update_layout(xaxis_title="จำนวนงาน", yaxis_title="ผู้รับผิดชอบ")
+            st.plotly_chart(fig, use_container_width=True)
+
+        with col2:
+            # Completion percentage distribution
+            if "CompletionPercentage" in df.columns:
+                completion_ranges = [
+                    "0%",
+                    "1-25%",
+                    "26-50%",
+                    "51-75%",
+                    "76-99%",
+                    "100%",
+                ]
+                completion_counts = [
+                    len(df[df["CompletionPercentage"] == 0]),
+                    len(
+                        df[
+                            (df["CompletionPercentage"] > 0)
+                            & (df["CompletionPercentage"] <= 25)
+                        ]
+                    ),
+                    len(
+                        df[
+                            (df["CompletionPercentage"] > 25)
+                            & (df["CompletionPercentage"] <= 50)
+                        ]
+                    ),
+                    len(
+                        df[
+                            (df["CompletionPercentage"] > 50)
+                            & (df["CompletionPercentage"] <= 75)
+                        ]
+                    ),
+                    len(
+                        df[
+                            (df["CompletionPercentage"] > 75)
+                            & (df["CompletionPercentage"] < 100)
+                        ]
+                    ),
+                    len(df[df["CompletionPercentage"] == 100]),
+                ]
+
+                fig = px.bar(
+                    x=completion_ranges, y=completion_counts, title="การกระจายความคืบหน้า"
+                )
+                fig.update_layout(xaxis_title="ช่วงความคืบหน้า", yaxis_title="จำนวนงาน")
+                st.plotly_chart(fig, use_container_width=True)
+
+
+def show_task_dashboard(task_manager: TaskManager, user_data: Dict[str, Any]):
+    """Show personalized task dashboard"""
+    ui = UIComponents()
+
+    st.subheader("📈 แดชบอร์ดงานส่วนตัว")
+
+    # Get user's tasks
+    my_tasks = safe_execute(
+        task_manager.get_tasks_by_user, user_data["UserID"], default_return=[]
+    )
+
+    if not my_tasks:
+        st.info("คุณไม่มีงานที่ได้รับมอบหมาย")
+        return
+
+    df = pd.DataFrame(my_tasks)
+
+    # Personal metrics
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        total_my_tasks = len(df)
+        st.metric("งานของฉันทั้งหมด", total_my_tasks)
+
+    with col2:
+        completed_my_tasks = len(df[df["Status"] == "Done"])
+        my_completion_rate = (
+            (completed_my_tasks / total_my_tasks * 100) if total_my_tasks > 0 else 0
+        )
+        st.metric("งานที่เสร็จแล้ว", completed_my_tasks, f"{my_completion_rate:.1f}%")
+
+    with col3:
+        in_progress_my_tasks = len(df[df["Status"] == "In Progress"])
+        st.metric("งานที่กำลังทำ", in_progress_my_tasks)
+
+    with col4:
+        overdue_my_tasks = len(
+            df[(df["DueDate"] < pd.Timestamp.now()) & (df["Status"] != "Done")]
+        )
+        st.metric(
+            "งานที่เลยกำหนด",
+            overdue_my_tasks,
+            delta=f"-{overdue_my_tasks}" if overdue_my_tasks > 0 else None,
+        )
+
+    # Upcoming deadlines
+    st.subheader("⏰ งานที่ใกล้ครบกำหนด")
+    upcoming_tasks = df[
+        (df["DueDate"] >= pd.Timestamp.now())
+        & (df["DueDate"] <= pd.Timestamp.now() + pd.Timedelta(days=7))
+        & (df["Status"] != "Done")
+    ].sort_values("DueDate")
+
+    if len(upcoming_tasks) > 0:
+        for _, task in upcoming_tasks.iterrows():
+            days_left = (task["DueDate"].date() - date.today()).days
+
+            with st.container():
+                col1, col2, col3 = st.columns([3, 1, 1])
+
+                with col1:
+                    st.markdown(f"**{task['Title']}**")
+                    st.markdown(f"โครงการ: {task.get('ProjectName', 'N/A')}")
+
+                with col2:
+                    st.markdown(
+                        ui.render_priority_badge(task["Priority"]),
+                        unsafe_allow_html=True,
+                    )
+                    ui.render_progress_bar(task.get("CompletionPercentage", 0))
+
+                with col3:
+                    if days_left == 0:
+                        st.markdown("**วันนี้!**")
+                    elif days_left == 1:
+                        st.markdown("**พรุ่งนี้**")
+                    else:
+                        st.markdown(f"**เหลือ {days_left} วัน**")
+
+                st.markdown("---")
+    else:
+        st.info("ไม่มีงานที่ใกล้ครบกำหนดในสัปดาห์นี้")
+
+    # Personal productivity chart
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.subheader("ความคืบหน้างานของฉัน")
+        if len(df) > 0:
+            my_status_counts = df["Status"].value_counts()
+            fig = px.pie(
+                values=my_status_counts.values,
+                names=my_status_counts.index,
+                title="สถานะงานของฉัน",
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+    with col2:
+        st.subheader("งานตามโครงการ")
+        if len(df) > 0 and "ProjectName" in df.columns:
+            project_counts = df["ProjectName"].value_counts()
+            fig = px.bar(
+                x=project_counts.values,
+                y=project_counts.index,
+                orientation="h",
+                title="จำนวนงานในแต่ละโครงการ",
+            )
+            fig.update_layout(xaxis_title="จำนวนงาน", yaxis_title="โครงการ")
+            st.plotly_chart(fig, use_container_width=True)
