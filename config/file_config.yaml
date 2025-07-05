@@ -1,0 +1,26 @@
+# File Upload Configuration
+file_upload:
+  max_file_size_mb: 50
+  allowed_extensions:
+    documents: ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.txt']
+    images: ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']
+    archives: ['.zip', '.rar', '.7z']
+  
+  # Storage strategy (file = local storage, db = database blob)
+  storage_strategy:
+    small_files: 'db'      # < 1MB store in database
+    large_files: 'file'    # >= 1MB store as files
+    images: 'file'         # Always store images as files
+    
+  # Image optimization
+  image_optimization:
+    thumbnails: true
+    max_width: 1920
+    max_height: 1080
+    quality: 85
+    
+  # Auto cleanup
+  cleanup:
+    temp_files_after_hours: 24
+    cache_files_after_days: 7
+    old_backups_after_days: 30

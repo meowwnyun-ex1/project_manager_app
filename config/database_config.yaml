@@ -1,0 +1,29 @@
+# Database Configuration for Space Optimization
+database:
+  # Connection settings
+  connection:
+    pool_size: 5
+    max_overflow: 10
+    pool_timeout: 30
+    
+  # Space optimization
+  optimization:
+    # Store large text as files instead of database
+    large_text_threshold_chars: 5000
+    
+    # Compress data before storing
+    compress_json_data: true
+    compress_log_data: true
+    
+    # Auto-archive old data
+    archive_policy:
+      completed_projects_after_months: 12
+      old_logs_after_months: 3
+      temp_data_after_days: 7
+      
+  # Backup strategy
+  backup:
+    auto_backup: true
+    backup_schedule: "0 2 * * *"  # Daily at 2 AM
+    retention_days: 30
+    compress_backups: true

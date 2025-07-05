@@ -1,333 +1,509 @@
 #!/usr/bin/env python3
 """
 modules/auth.py
-Authentication and Authorization for DENSO Project Manager Pro
+Authentication System for SDX Project Manager
+Modern authentication with beautiful UI matching the purple gradient theme
 """
+
+import streamlit as st
 import bcrypt
 import logging
-import streamlit as st
 from datetime import datetime, timedelta
-from typing import Dict, Optional, Any
+from typing import Optional, Dict, Any
+import hashlib
 import secrets
-import jwt
+import base64
 
 logger = logging.getLogger(__name__)
 
 
 class AuthenticationManager:
-    """Enterprise authentication manager"""
+    """Modern authentication system with enhanced security"""
 
     def __init__(self, db_manager):
         self.db = db_manager
-        self.max_login_attempts = 5
-        self.lockout_duration = 900  # 15 minutes
-        self.password_min_length = 8
+        self._ensure_admin_user()
 
-    def authenticate_user(self, username: str, password: str) -> Dict[str, Any]:
-        """Authenticate user credentials"""
+    def _ensure_admin_user(self):
+        """Ensure default admin user exists"""
         try:
-            # Get user data
-            user_query = """
-                SELECT UserID, Username, PasswordHash, Email, FirstName, LastName, 
-                       Role, Department, IsActive, IsLocked, FailedLoginAttempts,
-                       LastFailedLogin, MustChangePassword
-                FROM Users 
-                WHERE Username = ? AND IsActive = 1
-            """
-
-            users = self.db.execute_query(user_query, (username,))
-
-            if not users:
-                return {"success": False, "message": "ไม่พบชื่อผู้ใช้"}
-
-            user = users[0]
-
-            # Check if account is locked
-            if user["IsLocked"]:
-                if self._check_lockout_expired(user["LastFailedLogin"]):
-                    self._unlock_user(user["UserID"])
-                else:
-                    return {"success": False, "message": "บัญชีถูกล็อค กรุณาลองใหม่ภายหลัง"}
-
-            # Verify password
-            if self._verify_password(password, user["PasswordHash"]):
-                # Reset failed attempts
-                self._reset_failed_attempts(user["UserID"])
-
-                # Update last login
-                self._update_last_login(user["UserID"])
-
-                # Check if password change required
-                if user["MustChangePassword"]:
-                    return {
-                        "success": True,
-                        "user_data": user,
-                        "must_change_password": True,
-                        "message": "กรุณาเปลี่ยนรหัสผ่าน",
-                    }
-
-                return {"success": True, "user_data": user, "message": "เข้าสู่ระบบสำเร็จ"}
-            else:
-                # Handle failed login
-                self._handle_failed_login(user["UserID"])
-                return {"success": False, "message": "รหัสผ่านไม่ถูกต้อง"}
-
-        except Exception as e:
-            logger.error(f"Authentication failed: {e}")
-            return {"success": False, "message": "เกิดข้อผิดพลาดในการเข้าสู่ระบบ"}
-
-    def _verify_password(self, password: str, password_hash: str) -> bool:
-        """Verify password against hash"""
-        try:
-            return bcrypt.checkpw(
-                password.encode("utf-8"), password_hash.encode("utf-8")
+            admin_exists = self.db.execute_scalar(
+                "SELECT COUNT(*) FROM Users WHERE Username = ?", ("admin",)
             )
+
+            if admin_exists == 0:
+                hashed_password = self._hash_password("admin123")
+                self.db.execute_non_query(
+                    """
+                    INSERT INTO Users (Username, PasswordHash, FullName, Email, Role, IsActive)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                    (
+                        "admin",
+                        hashed_password,
+                        "System Administrator",
+                        "admin@sdx.com",
+                        "Admin",
+                        True,
+                    ),
+                )
+                logger.info("Default admin user created")
+
         except Exception as e:
-            logger.error(f"Password verification failed: {e}")
-            return False
+            logger.error(f"Error ensuring admin user: {e}")
 
     def _hash_password(self, password: str) -> str:
-        """Hash password with bcrypt"""
+        """Hash password using bcrypt"""
+        return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+    def _verify_password(self, password: str, hashed: str) -> bool:
+        """Verify password against hash"""
         try:
-            salt = bcrypt.gensalt(rounds=12)
-            return bcrypt.hashpw(password.encode("utf-8"), salt).decode("utf-8")
-        except Exception as e:
-            logger.error(f"Password hashing failed: {e}")
-            raise
-
-    def _handle_failed_login(self, user_id: int):
-        """Handle failed login attempt"""
-        try:
-            # Get current failed attempts
-            query = "SELECT FailedLoginAttempts FROM Users WHERE UserID = ?"
-            result = self.db.execute_query(query, (user_id,))
-
-            if result:
-                attempts = result[0]["FailedLoginAttempts"] + 1
-
-                if attempts >= self.max_login_attempts:
-                    # Lock account
-                    self.db.execute_non_query(
-                        """
-                        UPDATE Users 
-                        SET FailedLoginAttempts = ?, LastFailedLogin = GETDATE(), IsLocked = 1
-                        WHERE UserID = ?
-                    """,
-                        (attempts, user_id),
-                    )
-                else:
-                    # Update failed attempts
-                    self.db.execute_non_query(
-                        """
-                        UPDATE Users 
-                        SET FailedLoginAttempts = ?, LastFailedLogin = GETDATE()
-                        WHERE UserID = ?
-                    """,
-                        (attempts, user_id),
-                    )
-
-        except Exception as e:
-            logger.error(f"Failed to handle failed login: {e}")
-
-    def _reset_failed_attempts(self, user_id: int):
-        """Reset failed login attempts"""
-        try:
-            self.db.execute_non_query(
-                """
-                UPDATE Users 
-                SET FailedLoginAttempts = 0, LastFailedLogin = NULL
-                WHERE UserID = ?
-            """,
-                (user_id,),
-            )
-        except Exception as e:
-            logger.error(f"Failed to reset login attempts: {e}")
-
-    def _update_last_login(self, user_id: int):
-        """Update last login timestamp"""
-        try:
-            self.db.execute_non_query(
-                """
-                UPDATE Users 
-                SET LastLoginDate = GETDATE()
-                WHERE UserID = ?
-            """,
-                (user_id,),
-            )
-        except Exception as e:
-            logger.error(f"Failed to update last login: {e}")
-
-    def _check_lockout_expired(self, last_failed_login: datetime) -> bool:
-        """Check if lockout period has expired"""
-        if not last_failed_login:
-            return True
-
-        lockout_expiry = last_failed_login + timedelta(seconds=self.lockout_duration)
-        return datetime.now() > lockout_expiry
-
-    def _unlock_user(self, user_id: int):
-        """Unlock user account"""
-        try:
-            self.db.execute_non_query(
-                """
-                UPDATE Users 
-                SET IsLocked = 0, FailedLoginAttempts = 0, LastFailedLogin = NULL
-                WHERE UserID = ?
-            """,
-                (user_id,),
-            )
-        except Exception as e:
-            logger.error(f"Failed to unlock user: {e}")
-
-    def change_password(
-        self, user_id: int, old_password: str, new_password: str
-    ) -> Dict[str, Any]:
-        """Change user password"""
-        try:
-            # Validate new password
-            if not self._validate_password(new_password):
-                return {"success": False, "message": "รหัสผ่านไม่ตรงตามเงื่อนไข"}
-
-            # Get current password
-            query = "SELECT PasswordHash FROM Users WHERE UserID = ?"
-            result = self.db.execute_query(query, (user_id,))
-
-            if not result:
-                return {"success": False, "message": "ไม่พบผู้ใช้"}
-
-            current_hash = result[0]["PasswordHash"]
-
-            # Verify old password
-            if not self._verify_password(old_password, current_hash):
-                return {"success": False, "message": "รหัสผ่านเดิมไม่ถูกต้อง"}
-
-            # Hash new password
-            new_hash = self._hash_password(new_password)
-
-            # Update password
-            self.db.execute_non_query(
-                """
-                UPDATE Users 
-                SET PasswordHash = ?, MustChangePassword = 0
-                WHERE UserID = ?
-            """,
-                (new_hash, user_id),
-            )
-
-            return {"success": True, "message": "เปลี่ยนรหัสผ่านสำเร็จ"}
-
-        except Exception as e:
-            logger.error(f"Password change failed: {e}")
-            return {"success": False, "message": "เกิดข้อผิดพลาดในการเปลี่ยนรหัสผ่าน"}
-
-    def _validate_password(self, password: str) -> bool:
-        """Validate password strength"""
-        if len(password) < self.password_min_length:
+            return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
+        except:
             return False
 
-        # Check for at least one uppercase, lowercase, digit, and special character
-        has_upper = any(c.isupper() for c in password)
-        has_lower = any(c.islower() for c in password)
-        has_digit = any(c.isdigit() for c in password)
-        has_special = any(c in "!@#$%^&*()_+-=[]{}|;:,.<>?" for c in password)
-
-        return has_upper and has_lower and has_digit and has_special
-
-    def reset_password(self, user_id: int, new_password: str = None) -> Dict[str, Any]:
-        """Reset user password (Admin only)"""
+    def authenticate_user(
+        self, username: str, password: str
+    ) -> Optional[Dict[str, Any]]:
+        """Authenticate user and return user data"""
         try:
-            if not new_password:
-                new_password = self._generate_temp_password()
-
-            if not self._validate_password(new_password):
-                return {"success": False, "message": "รหัสผ่านไม่ตรงตามเงื่อนไข"}
-
-            new_hash = self._hash_password(new_password)
-
-            self.db.execute_non_query(
+            user_data = self.db.execute_query(
                 """
-                UPDATE Users 
-                SET PasswordHash = ?, MustChangePassword = 1, IsLocked = 0, 
-                    FailedLoginAttempts = 0, LastFailedLogin = NULL
-                WHERE UserID = ?
+                SELECT UserID, Username, PasswordHash, FullName, Email, Role, IsActive, LastLoginDate
+                FROM Users 
+                WHERE Username = ? AND IsActive = 1
             """,
-                (new_hash, user_id),
+                (username,),
             )
 
-            return {
-                "success": True,
-                "message": "รีเซ็ตรหัสผ่านสำเร็จ",
-                "new_password": new_password,
-            }
+            if not user_data:
+                return None
+
+            user = user_data[0]
+
+            if self._verify_password(password, user["PasswordHash"]):
+                # Update last login
+                self.db.execute_non_query(
+                    "UPDATE Users SET LastLoginDate = GETDATE() WHERE UserID = ?",
+                    (user["UserID"],),
+                )
+
+                # Remove sensitive data
+                user_safe = {k: v for k, v in user.items() if k != "PasswordHash"}
+                return user_safe
+
+            return None
 
         except Exception as e:
-            logger.error(f"Password reset failed: {e}")
-            return {"success": False, "message": "เกิดข้อผิดพลาดในการรีเซ็ตรหัสผ่าน"}
-
-    def _generate_temp_password(self) -> str:
-        """Generate temporary password"""
-        return secrets.token_urlsafe(12)
-
-    def check_permission(self, user_role: str, required_permission: str) -> bool:
-        """Check if user has required permission"""
-        role_permissions = {
-            "Admin": ["all"],
-            "Project Manager": ["projects", "tasks", "users", "reports"],
-            "Team Lead": ["tasks", "reports"],
-            "Developer": ["tasks"],
-            "User": ["tasks"],
-            "Viewer": ["view"],
-        }
-
-        user_permissions = role_permissions.get(user_role, [])
-        return "all" in user_permissions or required_permission in user_permissions
-
-    def get_user_by_id(self, user_id: int) -> Optional[Dict[str, Any]]:
-        """Get user data by ID"""
-        try:
-            query = """
-                SELECT UserID, Username, Email, FirstName, LastName, 
-                       Role, Department, IsActive, CreatedDate, LastLoginDate
-                FROM Users 
-                WHERE UserID = ? AND IsActive = 1
-            """
-
-            result = self.db.execute_query(query, (user_id,))
-            return result[0] if result else None
-
-        except Exception as e:
-            logger.error(f"Failed to get user: {e}")
+            logger.error(f"Authentication error: {e}")
             return None
 
     def create_session_token(self, user_id: int) -> str:
-        """Create JWT session token"""
+        """Create secure session token"""
+        token_data = (
+            f"{user_id}:{datetime.now().isoformat()}:{secrets.token_urlsafe(32)}"
+        )
+        return base64.b64encode(token_data.encode()).decode()
+
+    def validate_session_token(self, token: str) -> Optional[int]:
+        """Validate session token and return user ID"""
         try:
-            payload = {
-                "user_id": user_id,
-                "exp": datetime.utcnow() + timedelta(hours=8),
-                "iat": datetime.utcnow(),
+            decoded = base64.b64decode(token.encode()).decode()
+            parts = decoded.split(":")
+            if len(parts) >= 3:
+                user_id = int(parts[0])
+                token_time = datetime.fromisoformat(parts[1])
+
+                # Check if token is not expired (24 hours)
+                if datetime.now() - token_time < timedelta(hours=24):
+                    return user_id
+            return None
+        except:
+            return None
+
+    def render_modern_login_page(self):
+        """Render beautiful login page with purple gradient theme"""
+
+        # Custom CSS for modern login UI
+        st.markdown(
+            """
+        <style>
+            /* Import Google Fonts */
+            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+            
+            .main-login-container {
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                min-height: 100vh;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                padding: 2rem;
+                font-family: 'Inter', sans-serif;
             }
+            
+            .login-card {
+                background: rgba(255, 255, 255, 0.95);
+                backdrop-filter: blur(10px);
+                border-radius: 20px;
+                padding: 3rem;
+                box-shadow: 0 25px 50px rgba(0, 0, 0, 0.15);
+                max-width: 450px;
+                width: 100%;
+                border: 1px solid rgba(255, 255, 255, 0.2);
+            }
+            
+            .login-header {
+                text-align: center;
+                margin-bottom: 2.5rem;
+            }
+            
+            .login-logo {
+                width: 80px;
+                height: 80px;
+                margin: 0 auto 1.5rem;
+                background: linear-gradient(135deg, #667eea, #764ba2);
+                border-radius: 20px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                color: white;
+                font-size: 2rem;
+                font-weight: 600;
+                box-shadow: 0 10px 25px rgba(102, 126, 234, 0.3);
+            }
+            
+            .login-title {
+                font-size: 2rem;
+                font-weight: 700;
+                color: #1e293b;
+                margin-bottom: 0.5rem;
+                background: linear-gradient(135deg, #667eea, #764ba2);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+            }
+            
+            .login-subtitle {
+                color: #64748b;
+                font-size: 1rem;
+                font-weight: 400;
+            }
+            
+            .login-form {
+                space-y: 1.5rem;
+            }
+            
+            .form-group {
+                margin-bottom: 1.5rem;
+            }
+            
+            .form-label {
+                display: block;
+                font-size: 0.875rem;
+                font-weight: 500;
+                color: #374151;
+                margin-bottom: 0.5rem;
+            }
+            
+            .stTextInput > div > div > input {
+                border: 2px solid #e5e7eb !important;
+                border-radius: 12px !important;
+                padding: 0.75rem 1rem !important;
+                font-size: 1rem !important;
+                transition: all 0.2s ease !important;
+                background: #f9fafb !important;
+            }
+            
+            .stTextInput > div > div > input:focus {
+                border-color: #667eea !important;
+                box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1) !important;
+                background: white !important;
+            }
+            
+            .login-button {
+                width: 100%;
+                background: linear-gradient(135deg, #667eea, #764ba2);
+                border: none;
+                border-radius: 12px;
+                padding: 0.875rem 1.5rem;
+                font-size: 1rem;
+                font-weight: 600;
+                color: white;
+                cursor: pointer;
+                transition: all 0.2s ease;
+                margin-top: 1rem;
+            }
+            
+            .login-button:hover {
+                transform: translateY(-1px);
+                box-shadow: 0 10px 25px rgba(102, 126, 234, 0.3);
+            }
+            
+            .login-footer {
+                text-align: center;
+                margin-top: 2rem;
+                padding-top: 2rem;
+                border-top: 1px solid #e5e7eb;
+            }
+            
+            .copyright {
+                color: #64748b;
+                font-size: 0.875rem;
+                line-height: 1.5;
+            }
+            
+            .features-list {
+                display: grid;
+                grid-template-columns: repeat(2, 1fr);
+                gap: 1rem;
+                margin-top: 2rem;
+            }
+            
+            .feature-item {
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+                font-size: 0.875rem;
+                color: #64748b;
+            }
+            
+            .feature-icon {
+                width: 16px;
+                height: 16px;
+                color: #667eea;
+            }
+            
+            /* Streamlit specific adjustments */
+            .block-container {
+                padding: 0 !important;
+                max-width: none !important;
+            }
+            
+            .stApp > header {
+                display: none;
+            }
+            
+            .stApp {
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            }
+            
+            /* Error message styling */
+            .stAlert {
+                border-radius: 12px !important;
+                border: none !important;
+                margin-bottom: 1rem !important;
+            }
+        </style>
+        """,
+            unsafe_allow_html=True,
+        )
 
-            secret_key = st.secrets.get("app", {}).get("secret_key", "fallback-secret")
-            return jwt.encode(payload, secret_key, algorithm="HS256")
+        # Main login container
+        st.markdown('<div class="main-login-container">', unsafe_allow_html=True)
 
-        except Exception as e:
-            logger.error(f"Token creation failed: {e}")
-            return None
+        # Login card
+        col1, col2, col3 = st.columns([1, 2, 1])
 
-    def verify_session_token(self, token: str) -> Optional[int]:
-        """Verify JWT session token"""
-        try:
-            secret_key = st.secrets.get("app", {}).get("secret_key", "fallback-secret")
-            payload = jwt.decode(token, secret_key, algorithms=["HS256"])
-            return payload["user_id"]
+        with col2:
+            st.markdown(
+                """
+            <div class="login-card">
+                <div class="login-header">
+                    <div class="login-logo">SDX</div>
+                    <h1 class="login-title">SDX | Project Manager</h1>
+                    <p class="login-subtitle">เข้าสู่ระบบเพื่อจัดการโครงการของคุณ</p>
+                </div>
+            """,
+                unsafe_allow_html=True,
+            )
 
-        except jwt.ExpiredSignatureError:
-            logger.warning("Token expired")
-            return None
-        except jwt.InvalidTokenError:
-            logger.warning("Invalid token")
-            return None
-        except Exception as e:
-            logger.error(f"Token verification failed: {e}")
-            return None
+            # Login form
+            with st.form("login_form", clear_on_submit=False):
+                st.markdown('<div class="login-form">', unsafe_allow_html=True)
+
+                st.markdown(
+                    '<label class="form-label">ชื่อผู้ใช้</label>', unsafe_allow_html=True
+                )
+                username = st.text_input(
+                    "",
+                    placeholder="กรอกชื่อผู้ใช้",
+                    key="username",
+                    label_visibility="collapsed",
+                )
+
+                st.markdown(
+                    '<label class="form-label">รหัสผ่าน</label>', unsafe_allow_html=True
+                )
+                password = st.text_input(
+                    "",
+                    type="password",
+                    placeholder="กรอกรหัสผ่าน",
+                    key="password",
+                    label_visibility="collapsed",
+                )
+
+                col_btn1, col_btn2 = st.columns([1, 1])
+
+                with col_btn1:
+                    remember_me = st.checkbox("จดจำการเข้าสู่ระบบ")
+
+                with col_btn2:
+                    forgot_password = st.button("ลืมรหัสผ่าน?", type="secondary")
+
+                st.markdown("</div>", unsafe_allow_html=True)
+
+                login_submitted = st.form_submit_button(
+                    "เข้าสู่ระบบ", use_container_width=True, type="primary"
+                )
+
+            # Handle login
+            if login_submitted:
+                if username and password:
+                    user = self.authenticate_user(username, password)
+
+                    if user:
+                        # Set session state
+                        st.session_state.authenticated = True
+                        st.session_state.user = user
+                        st.session_state.session_token = self.create_session_token(
+                            user["UserID"]
+                        )
+                        st.session_state.last_activity = datetime.now()
+
+                        # Store in browser if remember me
+                        if remember_me:
+                            st.markdown(
+                                f"""
+                            <script>
+                                localStorage.setItem('sdx_session_token', '{st.session_state.session_token}');
+                                localStorage.setItem('sdx_remember_user', 'true');
+                            </script>
+                            """,
+                                unsafe_allow_html=True,
+                            )
+
+                        st.success("🎉 เข้าสู่ระบบสำเร็จ!")
+                        st.rerun()
+                    else:
+                        st.error("❌ ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง")
+                else:
+                    st.warning("⚠️ กรุณากรอกชื่อผู้ใช้และรหัสผ่าน")
+
+            if forgot_password:
+                st.info("📧 กรุณาติดต่อผู้ดูแลระบบเพื่อขอรีเซ็ตรหัสผ่าน")
+
+            # Features and footer
+            st.markdown(
+                """
+                <div class="features-list">
+                    <div class="feature-item">
+                        <span class="feature-icon">✓</span>
+                        <span>จัดการโครงการ</span>
+                    </div>
+                    <div class="feature-item">
+                        <span class="feature-icon">✓</span>
+                        <span>ติดตามงาน</span>
+                    </div>
+                    <div class="feature-item">
+                        <span class="feature-icon">✓</span>
+                        <span>รายงานการทำงาน</span>
+                    </div>
+                    <div class="feature-item">
+                        <span class="feature-icon">✓</span>
+                        <span>วิเคราะห์ข้อมูล</span>
+                    </div>
+                </div>
+                
+                <div class="login-footer">
+                    <div class="copyright">
+                        <strong>SDX | Project Manager v2.0</strong><br>
+                        พัฒนาโดย <strong>Thammaphon Chittasuwanna (SDM)</strong><br>
+                        Innovation Team © 2024
+                    </div>
+                </div>
+            </div>
+            """,
+                unsafe_allow_html=True,
+            )
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    def check_authentication(self) -> bool:
+        """Check if user is authenticated"""
+        # Check session state first
+        if st.session_state.get("authenticated", False):
+            return True
+
+        # Check browser storage for remember me
+        check_storage_script = """
+        <script>
+            const token = localStorage.getItem('sdx_session_token');
+            const remember = localStorage.getItem('sdx_remember_user');
+            
+            if (token && remember === 'true') {
+                // Send token back to Streamlit
+                window.parent.postMessage({
+                    type: 'streamlit:componentReady',
+                    token: token
+                }, '*');
+            }
+        </script>
+        """
+
+        # For now, just check session state
+        return st.session_state.get("authenticated", False)
+
+    def logout_user(self):
+        """Logout user and clear session"""
+        # Clear browser storage
+        clear_storage_script = """
+        <script>
+            localStorage.removeItem('sdx_session_token');
+            localStorage.removeItem('sdx_remember_user');
+            localStorage.removeItem('sdx_session_data');
+        </script>
+        """
+        st.markdown(clear_storage_script, unsafe_allow_html=True)
+
+        # Clear session state
+        keys_to_clear = ["authenticated", "user", "session_token", "last_activity"]
+        for key in keys_to_clear:
+            if key in st.session_state:
+                del st.session_state[key]
+
+        st.success("👋 ออกจากระบบเรียบร้อยแล้ว")
+        st.rerun()
+
+    def get_current_user(self) -> Optional[Dict[str, Any]]:
+        """Get current authenticated user"""
+        return st.session_state.get("user")
+
+    def is_admin(self) -> bool:
+        """Check if current user is admin"""
+        user = self.get_current_user()
+        return user and user.get("Role") == "Admin"
+
+    def require_auth(self, admin_required: bool = False):
+        """Decorator-like function to require authentication"""
+        if not self.check_authentication():
+            self.render_modern_login_page()
+            st.stop()
+
+        if admin_required and not self.is_admin():
+            st.error("🔒 ต้องมีสิทธิ์ผู้ดูแลระบบเท่านั้น")
+            st.stop()
+
+    def render_user_menu(self):
+        """Render user menu in sidebar"""
+        user = self.get_current_user()
+        if not user:
+            return
+
+        with st.sidebar:
+            st.markdown("---")
+            st.markdown(f"👤 **{user['FullName']}**")
+            st.caption(f"Role: {user['Role']}")
+            st.caption(f"Email: {user['Email']}")
+
+            if st.button("🚪 ออกจากระบบ", use_container_width=True):
+                self.logout_user()

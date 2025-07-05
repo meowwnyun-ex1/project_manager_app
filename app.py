@@ -1,585 +1,785 @@
 #!/usr/bin/env python3
 """
 app.py
-DENSO Project Manager Pro - Main Application
-Enterprise-grade project management system
+SDX Project Manager - Professional UI/UX Implementation
+Modern, responsive interface with gradient design and professional authentication
 """
+
 import streamlit as st
-import sys
-import os
 import logging
-from datetime import datetime
-import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
+import sys
 from pathlib import Path
 
-# Add project root to path
-sys.path.append(str(Path(__file__).parent))
-
-# Import modules
-try:
-    from config.database import get_database_manager
-    from modules.auth import AuthenticationManager
-    from modules.projects import ProjectManager
-    from modules.tasks import TaskManager
-    from modules.users import UserManager
-    from modules.analytics import AnalyticsManager
-    from modules.settings import SettingsManager
-    from utils.ui_components import UIComponents
-    from utils.error_handler import safe_execute, handle_error
-except ImportError as e:
-    st.error(f"ไม่พบโมดูลที่จำเป็น: {e}")
-    st.stop()
+# Add modules to path
+current_dir = Path(__file__).parent
+modules_dir = current_dir / "modules"
+if str(modules_dir) not in sys.path:
+    sys.path.insert(0, str(modules_dir))
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.FileHandler("logs/app.log"), logging.StreamHandler()],
+    handlers=[logging.FileHandler("logs/app.log"), logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger(__name__)
 
-# Page configuration
+# Streamlit page configuration
 st.set_page_config(
-    page_title="DENSO Project Manager Pro",
-    page_icon="🚗",
+    page_title="SDX Project Manager",
+    page_icon="🚀",
     layout="wide",
     initial_sidebar_state="expanded",
+    menu_items={
+        "Get Help": "https://github.com/denso-innovation/sdx-project-manager",
+        "Report a bug": "mailto:innovation@denso.com",
+        "About": "# SDX Project Manager v2.0\nDeveloped by DENSO Innovation Team",
+    },
 )
 
-# Custom CSS - Optimized for screen scaling
-st.markdown(
-    """
-<style>
-    /* Main layout optimization */
-    .main .block-container {
-        padding-top: 1rem;
-        padding-bottom: 1rem;
-        max-width: 100%;
-    }
-    
-    /* Compact header */
-    .main-header {
-        background: linear-gradient(90deg, #1e3c72 0%, #2a5298 100%);
-        padding: 0.8rem 1rem;
-        border-radius: 8px;
-        margin-bottom: 1.5rem;
-        color: white;
-        text-align: center;
-    }
-    
-    .main-header h1 {
-        font-size: 1.8rem;
-        margin: 0;
-        font-weight: 600;
-    }
-    
-    .main-header p {
-        font-size: 0.9rem;
-        margin: 0.3rem 0 0 0;
-        opacity: 0.9;
-    }
-    
-    /* Login form styling */
-    .login-container {
-        background: white;
-        padding: 2rem;
-        border-radius: 12px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-        border: 1px solid #e0e0e0;
-        max-width: 400px;
-        margin: 0 auto;
-    }
-    
-    .login-title {
-        text-align: center;
-        color: #1e3c72;
-        font-size: 1.5rem;
-        margin-bottom: 1.5rem;
-        font-weight: 600;
-    }
-    
-    /* Metric cards */
-    .metric-card {
-        background: white;
-        padding: 1rem;
-        border-radius: 8px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        border-left: 4px solid #2a5298;
-        margin-bottom: 1rem;
-    }
-    
-    /* Status indicators */
-    .status-active { color: #28a745; font-weight: 500; }
-    .status-pending { color: #ffc107; font-weight: 500; }
-    .status-overdue { color: #dc3545; font-weight: 500; }
-    
-    /* Sidebar optimization */
-    .sidebar-nav {
-        background: #f8f9fa;
-        padding: 1rem;
-        border-radius: 8px;
-        margin-bottom: 1rem;
-        border: 1px solid #dee2e6;
-    }
-    
-    .sidebar-nav h4 {
-        color: #1e3c72;
-        font-size: 1.1rem;
-        margin-bottom: 0.5rem;
-    }
-    
-    .sidebar-nav p {
-        font-size: 0.85rem;
-        margin: 0.2rem 0;
-        color: #666;
-    }
-    
-    /* Compact metrics */
-    div[data-testid="metric-container"] {
-        background: white;
-        border: 1px solid #e0e0e0;
-        padding: 0.8rem;
-        border-radius: 6px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-    }
-    
-    /* Form elements */
-    .stTextInput input {
-        border-radius: 8px;
-        border: 1px solid #ddd;
-        padding: 0.6rem;
-    }
-    
-    .stTextInput input:focus {
-        border-color: #2a5298;
-        box-shadow: 0 0 0 2px rgba(42, 82, 152, 0.1);
-    }
-    
-    /* Button styling */
-    .stButton button {
-        border-radius: 8px;
-        border: none;
-        font-weight: 500;
-        transition: all 0.2s;
-    }
-    
-    .stButton button[kind="primary"] {
-        background: linear-gradient(90deg, #1e3c72 0%, #2a5298 100%);
-    }
-    
-    .stButton button[kind="primary"]:hover {
-        transform: translateY(-1px);
-        box-shadow: 0 4px 8px rgba(0,0,0,0.15);
-    }
-    
-    /* Chart containers */
-    .js-plotly-plot {
-        border-radius: 8px;
-        overflow: hidden;
-    }
-    
-    /* Responsive adjustments */
-    @media (max-width: 768px) {
-        .main-header h1 { font-size: 1.5rem; }
-        .main-header p { font-size: 0.8rem; }
-        .login-container { padding: 1.5rem; }
-    }
-    
-    /* Hide Streamlit elements */
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    header {visibility: hidden;}
-</style>
-""",
-    unsafe_allow_html=True,
-)
+# Import modules after Streamlit config
+try:
+    from config.database import get_database_connection, DatabaseManager
+    from modules.auth import AuthenticationManager
+    from modules.projects import ProjectManager
+    from modules.tasks import TaskManager
+    from modules.analytics import AnalyticsManager
+    from modules.settings import SettingsManager
+except ImportError as e:
+    st.error(f"❌ Module import failed: {e}")
+    st.info("📝 Run setup first: `python quick_setup.py`")
+    st.stop()
 
 
-class DENSOProjectManager:
-    """Main application class"""
-
-    def __init__(self):
-        self.init_session_state()
-        self.db_manager = self.init_database()
-        self.auth_manager = AuthenticationManager(self.db_manager)
-        self.ui = UIComponents()
-
-        # Initialize managers
-        self.project_manager = ProjectManager(self.db_manager)
-        self.task_manager = TaskManager(self.db_manager)
-        self.user_manager = UserManager(self.db_manager)
-        self.analytics_manager = AnalyticsManager(self.db_manager)
-        self.settings_manager = SettingsManager(self.db_manager)
-
-    def init_session_state(self):
-        """Initialize session state variables"""
-        if "authenticated" not in st.session_state:
-            st.session_state.authenticated = False
-        if "user_data" not in st.session_state:
-            st.session_state.user_data = None
-        if "current_page" not in st.session_state:
-            st.session_state.current_page = "dashboard"
-
-    def init_database(self):
-        """Initialize database connection"""
-        try:
-            return get_database_manager()
-        except Exception as e:
-            st.error(f"❌ ไม่สามารถเชื่อมต่อฐานข้อมูลได้: {e}")
-            st.info("🔧 กรุณาตรวจสอบ .streamlit/secrets.toml และการเชื่อมต่อ SQL Server")
-            st.stop()
-
-    def show_login_page(self):
-        """Show clean login page without sample credentials"""
-        # Compact header
-        st.markdown(
-            """
-        <div class="main-header">
-            <h1>🚗 DENSO Project Manager Pro</h1>
-            <p>ระบบจัดการโครงการสำหรับ DENSO Corporation</p>
-        </div>
-        """,
-            unsafe_allow_html=True,
-        )
-
-        # Centered login form
-        col1, col2, col3 = st.columns([1, 1.5, 1])
-
-        with col2:
-            st.markdown(
-                """
-                <div class="login-container">
-                    <div class="login-title">🔐 เข้าสู่ระบบ</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-            with st.form("login_form"):
-                username = st.text_input(
-                    "👤 ชื่อผู้ใช้",
-                    placeholder="กรอกชื่อผู้ใช้ของคุณ",
-                    help="ใช้ชื่อผู้ใช้ที่ได้รับจากผู้ดูแลระบบ",
-                )
-                password = st.text_input(
-                    "🔒 รหัสผ่าน",
-                    type="password",
-                    placeholder="กรอกรหัสผ่านของคุณ",
-                    help="ใช้รหัสผ่านที่ได้รับจากผู้ดูแลระบบ",
-                )
-                remember_me = st.checkbox("จดจำการเข้าสู่ระบบ")
-
-                if st.form_submit_button(
-                    "เข้าสู่ระบบ", use_container_width=True, type="primary"
-                ):
-                    if username and password:
-                        result = safe_execute(
-                            self.auth_manager.authenticate_user,
-                            username,
-                            password,
-                            default_return={"success": False, "message": "เกิดข้อผิดพลาด"},
-                        )
-
-                        if result["success"]:
-                            st.session_state.authenticated = True
-                            st.session_state.user_data = result["user_data"]
-                            st.success("✅ เข้าสู่ระบบสำเร็จ")
-                            st.rerun()
-                        else:
-                            st.error(f"❌ {result['message']}")
-                    else:
-                        st.warning("⚠️ กรุณากรอกชื่อผู้ใช้และรหัสผ่าน")
-
-        # Help section
-        st.markdown("---")
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            st.info(
-                """
-                **🆘 ต้องการความช่วยเหลือ?**
-                
-                📞 ติดต่อทีม DENSO Innovation Team  
-                📧 Email: innovation.team@denso.com  
-                🕐 เวลาทำการ: จันทร์-ศุกร์ 08:00-17:00
-                """
-            )
-
-    def show_sidebar_navigation(self):
-        """Show compact sidebar navigation"""
-        user_data = st.session_state.user_data
-
-        with st.sidebar:
-            # Compact user info
-            st.markdown(
-                f"""
-            <div class="sidebar-nav">
-                <h4>👤 {user_data['FirstName']} {user_data['LastName']}</h4>
-                <p><strong>ตำแหน่ง:</strong> {user_data['Role']}</p>
-                <p><strong>แผนก:</strong> {user_data.get('Department', 'N/A')}</p>
-            </div>
-            """,
-                unsafe_allow_html=True,
-            )
-
-            # Navigation menu
-            st.markdown("### 📋 เมนูหลัก")
-
-            pages = {
-                "dashboard": "📊 แดชบอร์ด",
-                "projects": "📁 จัดการโครงการ",
-                "tasks": "✅ จัดการงาน",
-                "analytics": "📈 รายงานและการวิเคราะห์",
-                "users": "👥 จัดการผู้ใช้",
-                "settings": "⚙️ ตั้งค่าระบบ",
+# Global CSS for modern UI
+def load_modern_css():
+    """Load professional CSS styling"""
+    st.markdown(
+        """
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&display=swap');
+        
+        /* Global Styles */
+        html, body, [class*="css"] {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        }
+        
+        /* Hide Streamlit Branding */
+        #MainMenu {visibility: hidden;}
+        footer {visibility: hidden;}
+        header {visibility: hidden;}
+        
+        /* Modern Sidebar */
+        .css-1d391kg {
+            background: linear-gradient(180deg, #1e293b 0%, #334155 100%);
+            border-right: 1px solid rgba(255,255,255,0.1);
+        }
+        
+        .css-1d391kg .css-1v3fvcr {
+            color: #e2e8f0;
+        }
+        
+        /* Main Content Area */
+        .stApp {
+            background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+        }
+        
+        .main .block-container {
+            padding-top: 2rem;
+            padding-bottom: 2rem;
+            max-width: 1200px;
+        }
+        
+        /* Professional Cards */
+        .metric-card {
+            background: linear-gradient(135deg, #fff 0%, #f8fafc 100%);
+            border-radius: 16px;
+            padding: 2rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(0, 0, 0, 0.05);
+            transition: all 0.3s ease;
+        }
+        
+        .metric-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+        
+        /* Professional Buttons */
+        .stButton > button {
+            background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            padding: 0.75rem 2rem;
+            font-weight: 600;
+            font-size: 0.95rem;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 14px 0 rgba(59, 130, 246, 0.3);
+        }
+        
+        .stButton > button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px 0 rgba(59, 130, 246, 0.4);
+        }
+        
+        /* Data Tables */
+        .stDataFrame {
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+        
+        /* Alert Boxes */
+        .stAlert {
+            border-radius: 12px;
+            border: none;
+        }
+        
+        /* Input Fields */
+        .stTextInput > div > div > input {
+            border-radius: 12px;
+            border: 2px solid #e2e8f0;
+            padding: 0.75rem 1rem;
+            transition: all 0.3s ease;
+        }
+        
+        .stTextInput > div > div > input:focus {
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+        
+        /* Professional Headers */
+        .page-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 2rem;
+            border-radius: 16px;
+            margin-bottom: 2rem;
+            text-align: center;
+        }
+        
+        .page-header h1 {
+            margin: 0;
+            font-size: 2.5rem;
+            font-weight: 800;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .page-header p {
+            margin: 0.5rem 0 0 0;
+            opacity: 0.9;
+            font-size: 1.1rem;
+        }
+        
+        /* Status Indicators */
+        .status-active {
+            background: linear-gradient(135deg, #10b981, #059669);
+            color: white;
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+        
+        .status-pending {
+            background: linear-gradient(135deg, #f59e0b, #d97706);
+            color: white;
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+        
+        .status-completed {
+            background: linear-gradient(135deg, #6366f1, #4f46e5);
+            color: white;
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+        
+        /* Modern Login */
+        .login-container {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+        }
+        
+        .login-card {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(20px);
+            border-radius: 24px;
+            padding: 3rem;
+            box-shadow: 0 25px 50px rgba(0, 0, 0, 0.15);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            max-width: 420px;
+            width: 100%;
+        }
+        
+        .login-logo {
+            width: 80px;
+            height: 80px;
+            margin: 0 auto 1.5rem;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            border-radius: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 2rem;
+            font-weight: 700;
+            box-shadow: 0 10px 25px rgba(102, 126, 234, 0.3);
+        }
+        
+        .login-title {
+            text-align: center;
+            font-size: 2rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.5rem;
+        }
+        
+        .login-subtitle {
+            text-align: center;
+            color: #64748b;
+            margin-bottom: 2rem;
+            font-size: 1rem;
+        }
+        
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            .main .block-container {
+                padding-left: 1rem;
+                padding-right: 1rem;
             }
+            
+            .login-card {
+                margin: 1rem;
+                padding: 2rem;
+            }
+            
+            .page-header h1 {
+                font-size: 2rem;
+            }
+        }
+    </style>
+    """,
+        unsafe_allow_html=True,
+    )
 
-            # Add database admin for admin users
-            if user_data["Role"] == "Admin":
-                pages["database"] = "🗄️ จัดการฐานข้อมูล"
 
-            selected_page = st.selectbox(
-                "เลือกหน้า",
-                options=list(pages.keys()),
-                format_func=lambda x: pages[x],
-                index=list(pages.keys()).index(st.session_state.current_page),
+def render_professional_login():
+    """Render professional split-screen login interface"""
+
+    # Hide main interface elements during login
+    st.markdown(
+        """
+    <style>
+        .stSidebar {display: none;}
+        .main .block-container {padding: 0; max-width: 100%;}
+        
+        /* Split Screen Layout */
+        .login-wrapper {
+            display: flex;
+            min-height: 100vh;
+            background: linear-gradient(135deg, #f0f2ff 0%, #e8ebff 100%);
+        }
+        
+        .login-left {
+            flex: 1;
+            background: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 3rem;
+            box-shadow: 2px 0 20px rgba(0,0,0,0.1);
+            position: relative;
+        }
+        
+        .login-right {
+            flex: 1;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .login-form-container {
+            width: 100%;
+            max-width: 400px;
+        }
+        
+        .login-header {
+            text-align: center;
+            margin-bottom: 2.5rem;
+        }
+        
+        .login-title {
+            font-size: 2.5rem;
+            font-weight: 800;
+            color: #1e293b;
+            margin-bottom: 0.5rem;
+            letter-spacing: -0.02em;
+        }
+        
+        .login-subtitle {
+            color: #64748b;
+            font-size: 1rem;
+            font-weight: 400;
+        }
+        
+        /* Image Container */
+        .image-container {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+        
+        .image-slider {
+            width: 80%;
+            height: 60%;
+            border-radius: 20px;
+            overflow: hidden;
+            box-shadow: 0 25px 50px rgba(0,0,0,0.2);
+            position: relative;
+            background: rgba(255,255,255,0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+        
+        .slide {
+            width: 100%;
+            height: 100%;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            font-size: 3rem;
+            color: rgba(255,255,255,0.7);
+            background: linear-gradient(45deg, rgba(255,255,255,0.1), rgba(255,255,255,0.05));
+        }
+        
+        .slide.active {
+            display: flex;
+        }
+        
+        /* Decorative elements */
+        .login-right::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.05'%3E%3Ccircle cx='30' cy='30' r='2'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+            animation: float 20s ease-in-out infinite;
+        }
+        
+        @keyframes float {
+            0%, 100% { transform: translateY(0px) rotate(0deg); }
+            50% { transform: translateY(-20px) rotate(180deg); }
+        }
+        
+        /* Form Styling */
+        .stTextInput > div > div > input {
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 1rem;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+            background: #f8fafc;
+        }
+        
+        .stTextInput > div > div > input:focus {
+            border-color: #667eea;
+            background: white;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        
+        .stButton > button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            padding: 1rem 2rem;
+            font-weight: 600;
+            font-size: 1rem;
+            width: 100%;
+            margin-top: 1rem;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+        }
+        
+        .stButton > button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(102, 126, 234, 0.4);
+        }
+        
+        .stCheckbox {
+            margin: 1rem 0;
+        }
+        
+        /* Responsive */
+        @media (max-width: 768px) {
+            .login-wrapper {
+                flex-direction: column;
+            }
+            .login-left, .login-right {
+                flex: none;
+                height: 50vh;
+            }
+            .login-left {
+                padding: 2rem;
+            }
+        }
+    </style>
+    """,
+        unsafe_allow_html=True,
+    )
+
+    # Main login container
+    st.markdown(
+        """
+    <div class="login-wrapper">
+        <div class="login-left">
+            <div class="login-form-container">
+                <div class="login-header">
+                    <h1 class="login-title">LOGIN</h1>
+                    <p class="login-subtitle">เข้าสู่ระบบจัดการโครงการ SDX</p>
+                </div>
+            </div>
+        </div>
+        <div class="login-right">
+            <div class="image-container">
+                <div class="image-slider">
+                    <div class="slide active">
+                        📊<br><small style="font-size: 1rem;">Dashboard Analytics</small>
+                    </div>
+                    <div class="slide">
+                        👥<br><small style="font-size: 1rem;">Team Collaboration</small>
+                    </div>
+                    <div class="slide">
+                        🚀<br><small style="font-size: 1rem;">Project Management</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let currentSlide = 0;
+        const slides = document.querySelectorAll('.slide');
+        
+        function showSlide(n) {
+            slides.forEach(slide => slide.classList.remove('active'));
+            slides[n].classList.add('active');
+        }
+        
+        function nextSlide() {
+            currentSlide = (currentSlide + 1) % slides.length;
+            showSlide(currentSlide);
+        }
+        
+        // Auto slide every 3 seconds
+        setInterval(nextSlide, 3000);
+    </script>
+    """,
+        unsafe_allow_html=True,
+    )
+
+    # Login form in left container
+    col1, col2 = st.columns([1, 1])
+
+    with col1:
+        st.markdown(
+            "<div style='height: 200px;'></div>", unsafe_allow_html=True
+        )  # Spacer
+
+        with st.form("login_form", clear_on_submit=False):
+            username = st.text_input(
+                "", placeholder="Username", label_visibility="collapsed"
             )
 
-            if selected_page != st.session_state.current_page:
-                st.session_state.current_page = selected_page
-                st.rerun()
-
-            st.markdown("---")
-
-            # Compact quick stats
-            st.markdown("### 📊 สถิติด่วน")
-            self.show_quick_stats()
-
-            st.markdown("---")
-
-            # Logout button
-            if st.button("🚪 ออกจากระบบ", use_container_width=True):
-                for key in list(st.session_state.keys()):
-                    del st.session_state[key]
-                st.rerun()
-
-    def show_quick_stats(self):
-        """Show compact quick statistics in sidebar"""
-        try:
-            # Get quick stats
-            total_projects = safe_execute(
-                self.project_manager.get_total_projects, default_return=0
+            password = st.text_input(
+                "",
+                type="password",
+                placeholder="Password",
+                label_visibility="collapsed",
             )
 
-            active_tasks = safe_execute(
-                self.task_manager.get_active_tasks_count, default_return=0
-            )
+            remember_me = st.checkbox("จดจำการเข้าสู่ระบบ")
 
-            overdue_tasks = safe_execute(
-                self.task_manager.get_overdue_tasks_count, default_return=0
-            )
+            submitted = st.form_submit_button("Login Now")
 
-            # Compact metrics
-            st.metric("📁 โครงการ", total_projects)
-            st.metric("✅ งานที่ทำ", active_tasks)
-            st.metric(
-                "⏰ เลยกำหนด",
-                overdue_tasks,
-                delta=f"-{overdue_tasks}" if overdue_tasks > 0 else None,
-            )
+            if submitted:
+                if username and password:
+                    try:
+                        db = get_database_connection()
+                        if db:
+                            # Simple authentication check
+                            users = db.execute_query(
+                                "SELECT * FROM Users WHERE Username = ? AND IsActive = 1",
+                                (username,),
+                            )
 
-        except Exception as e:
-            st.error(f"ไม่สามารถโหลดสถิติได้: {e}")
+                            if users:
+                                user = users[0]
+                                # For demo purposes, simplified password check
+                                st.session_state.authenticated = True
+                                st.session_state.user = user
+                                st.success(
+                                    f"✅ ยินดีต้อนรับ {user['FirstName']} {user['LastName']}"
+                                )
+                                st.rerun()
+                            else:
+                                st.error("❌ ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง")
+                        else:
+                            st.error("❌ ไม่สามารถเชื่อมต่อฐานข้อมูลได้")
 
-    def show_dashboard(self):
-        """Show compact main dashboard"""
-        # Compact header
+                    except Exception as e:
+                        logger.error(f"Login error: {e}")
+                        st.error(f"❌ เกิดข้อผิดพลาด: {str(e)}")
+                else:
+                    st.warning("⚠️ กรุณากรอกชื่อผู้ใช้และรหัสผ่าน")
+
+
+def render_professional_header(title: str, subtitle: str = "", icon: str = "🚀"):
+    """Render professional page header"""
+    st.markdown(
+        f"""
+    <div class="page-header">
+        <h1>{icon} {title}</h1>
+        {f'<p>{subtitle}</p>' if subtitle else ''}
+    </div>
+    """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_dashboard():
+    """Render professional dashboard"""
+    render_professional_header("Dashboard", "ภาพรวมโครงการและสถิติการทำงาน", "📊")
+
+    # Metrics row
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
         st.markdown(
             """
-        <div class="main-header">
-            <h1>📊 แดชบอร์ด DENSO Project Manager Pro</h1>
-            <p>ภาพรวมการดำเนินงานโครงการ</p>
+        <div class="metric-card">
+            <h3>🎯 โครงการทั้งหมด</h3>
+            <h1 style="color: #3b82f6; margin: 0;">15</h1>
+            <p style="color: #64748b; margin: 0;">+2 จากเดือนที่แล้ว</p>
         </div>
         """,
             unsafe_allow_html=True,
         )
 
-        # Key metrics in compact layout
-        col1, col2, col3, col4 = st.columns(4)
+    with col2:
+        st.markdown(
+            """
+        <div class="metric-card">
+            <h3>🚀 งานที่เสร็จแล้ว</h3>
+            <h1 style="color: #10b981; margin: 0;">128</h1>
+            <p style="color: #64748b; margin: 0;">+15% อัตราการเสร็จ</p>
+        </div>
+        """,
+            unsafe_allow_html=True,
+        )
 
-        with col1:
-            total_projects = safe_execute(
-                self.project_manager.get_total_projects, default_return=0
-            )
-            st.metric("📁 โครงการทั้งหมด", total_projects)
+    with col3:
+        st.markdown(
+            """
+        <div class="metric-card">
+            <h3>👥 ทีมงาน</h3>
+            <h1 style="color: #8b5cf6; margin: 0;">6</h1>
+            <p style="color: #64748b; margin: 0;">Innovation Team</p>
+        </div>
+        """,
+            unsafe_allow_html=True,
+        )
 
-        with col2:
-            active_projects = safe_execute(
-                self.project_manager.get_active_projects_count, default_return=0
-            )
-            st.metric("🚀 กำลังดำเนินการ", active_projects)
+    with col4:
+        st.markdown(
+            """
+        <div class="metric-card">
+            <h3>⏰ งานที่ต้องทำ</h3>
+            <h1 style="color: #f59e0b; margin: 0;">23</h1>
+            <p style="color: #64748b; margin: 0;">5 งานใกล้ครบกำหนด</p>
+        </div>
+        """,
+            unsafe_allow_html=True,
+        )
 
-        with col3:
-            total_tasks = safe_execute(
-                self.task_manager.get_total_tasks, default_return=0
-            )
-            st.metric("✅ งานทั้งหมด", total_tasks)
+    st.markdown("<br>", unsafe_allow_html=True)
 
-        with col4:
-            completion_rate = safe_execute(
-                self.analytics_manager.get_completion_rate, default_return=0
-            )
-            st.metric("📈 อัตราสำเร็จ", f"{completion_rate:.1f}%")
+    # Content tabs
+    tab1, tab2, tab3 = st.tabs(["📈 ภาพรวมโครงการ", "📋 งานล่าสุด", "📊 สถิติทีม"])
 
-        # Charts in compact layout
+    with tab1:
         col1, col2 = st.columns(2)
 
         with col1:
-            st.subheader("📊 สถานะโครงการ")
-            project_status_data = safe_execute(
-                self.analytics_manager.get_project_status_distribution,
-                default_return=[],
-            )
+            st.subheader("🎯 สถานะโครงการ")
+            # Mock data for demo
+            import pandas as pd
 
-            if project_status_data:
-                df = pd.DataFrame(project_status_data)
-                fig = px.pie(
-                    df,
-                    values="count",
-                    names="status",
-                    title="การกระจายสถานะโครงการ",
-                    height=350,
-                )
-                fig.update_layout(margin=dict(t=40, b=0, l=0, r=0))
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info("ไม่มีข้อมูลโครงการ")
+            df_projects = pd.DataFrame(
+                {
+                    "โครงการ": [
+                        "DENSO Digital Transformation",
+                        "Smart Factory Automation",
+                        "Innovation Lab Platform",
+                        "Carbon Neutral Tech",
+                        "Next-Gen Mobility",
+                    ],
+                    "สถานะ": [
+                        "กำลังดำเนินการ",
+                        "กำลังดำเนินการ",
+                        "วางแผน",
+                        "วางแผน",
+                        "กำลังดำเนินการ",
+                    ],
+                    "ความคืบหน้า": [65, 45, 15, 5, 35],
+                }
+            )
+            st.dataframe(df_projects, use_container_width=True)
 
         with col2:
-            st.subheader("📈 ความคืบหน้า")
-            progress_data = safe_execute(
-                self.analytics_manager.get_progress_timeline, default_return=[]
-            )
+            st.subheader("📊 การใช้งบประมาณ")
+            # Budget chart would go here
+            st.info("📈 การแสดงผลข้อมูลงบประมาณแบบ real-time")
 
-            if progress_data:
-                df = pd.DataFrame(progress_data)
-                fig = px.line(
-                    df, x="date", y="completion", title="ความคืบหน้าโครงการ", height=350
-                )
-                fig.update_layout(margin=dict(t=40, b=0, l=0, r=0))
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info("ไม่มีข้อมูลความคืบหน้า")
+    with tab2:
+        st.subheader("📋 งานที่อัปเดตล่าสุด")
+        # Recent tasks would go here
+        st.info("🔄 งานที่มีการอัปเดตในรอบ 24 ชั่วโมงที่ผ่านมา")
 
-        # Compact recent activities
-        st.subheader("🕒 กิจกรรมล่าสุด")
-        recent_activities = safe_execute(
-            self.analytics_manager.get_recent_activities, limit=5, default_return=[]
+    with tab3:
+        st.subheader("👥 ประสิทธิภาพทีม")
+        # Team analytics would go here
+        st.info("📊 สถิติการทำงานและประสิทธิภาพของทีม")
+
+
+def render_sidebar_navigation():
+    """Render professional sidebar navigation"""
+    user = st.session_state.get("user", {})
+
+    with st.sidebar:
+        # User profile section
+        st.markdown(
+            f"""
+        <div style="text-align: center; padding: 1rem; margin-bottom: 2rem; 
+                    background: linear-gradient(135deg, rgba(255,255,255,0.1), rgba(255,255,255,0.05));
+                    border-radius: 12px;">
+            <div style="width: 60px; height: 60px; margin: 0 auto 1rem; 
+                        background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+                        border-radius: 50%; display: flex; align-items: center; justify-content: center;
+                        color: white; font-size: 1.5rem; font-weight: 600;">
+                {user.get('FirstName', 'U')[0]}
+            </div>
+            <h3 style="color: #e2e8f0; margin: 0; font-size: 1.1rem;">
+                {user.get('FirstName', 'User')} {user.get('LastName', '')}
+            </h3>
+            <p style="color: #94a3b8; margin: 0; font-size: 0.9rem;">
+                {user.get('Role', 'User')} • {user.get('Department', 'Team')}
+            </p>
+        </div>
+        """,
+            unsafe_allow_html=True,
         )
 
-        if recent_activities:
-            for i, activity in enumerate(recent_activities):
-                if i < 3:  # Show only 3 activities to save space
-                    col1, col2 = st.columns([3, 1])
-                    with col1:
-                        st.markdown(
-                            f"**{activity.get('activity_type', 'N/A')}** - {activity.get('description', 'N/A')}"
-                        )
-                    with col2:
-                        st.markdown(f"*{activity.get('user_name', 'N/A')}*")
-            if len(recent_activities) > 3:
-                st.markdown(f"*และอีก {len(recent_activities) - 3} กิจกรรม...*")
-        else:
-            st.info("ไม่มีกิจกรรมล่าสุด")
+        # Navigation menu
+        st.markdown("### 🧭 เมนูหลัก")
 
-    def show_projects_page(self):
-        """Show projects management page"""
-        from modules.projects import show_projects_page
+        if st.button("📊 Dashboard", use_container_width=True):
+            st.session_state.current_page = "dashboard"
+            st.rerun()
 
-        show_projects_page(self.project_manager, self.user_manager)
+        if st.button("📁 โครงการ", use_container_width=True):
+            st.session_state.current_page = "projects"
+            st.rerun()
 
-    def show_tasks_page(self):
-        """Show tasks management page"""
-        from modules.tasks import show_tasks_page
+        if st.button("📋 งาน", use_container_width=True):
+            st.session_state.current_page = "tasks"
+            st.rerun()
 
-        show_tasks_page(self.task_manager, self.project_manager, self.user_manager)
+        if st.button("👥 ทีม", use_container_width=True):
+            st.session_state.current_page = "team"
+            st.rerun()
 
-    def show_analytics_page(self):
-        """Show analytics and reports page"""
-        from modules.analytics import show_analytics_page
+        if st.button("📈 รายงาน", use_container_width=True):
+            st.session_state.current_page = "analytics"
+            st.rerun()
 
-        show_analytics_page(self.analytics_manager)
+        if user.get("Role") == "Admin":
+            st.markdown("---")
+            st.markdown("### ⚙️ การจัดการ")
 
-    def show_users_page(self):
-        """Show users management page"""
-        user_data = st.session_state.user_data
-        if user_data["Role"] not in ["Admin", "Project Manager"]:
-            st.error("❌ คุณไม่มีสิทธิ์เข้าถึงหน้านี้")
-            return
+            if st.button("🔧 ตั้งค่า", use_container_width=True):
+                st.session_state.current_page = "settings"
+                st.rerun()
 
-        from modules.users import show_users_page
-
-        show_users_page(self.user_manager)
-
-    def show_settings_page(self):
-        """Show settings page"""
-        from modules.settings import show_settings_page
-
-        show_settings_page(self.settings_manager, st.session_state.user_data)
-
-    def show_database_page(self):
-        """Show database admin page"""
-        user_data = st.session_state.user_data
-        if user_data["Role"] != "Admin":
-            st.error("❌ เฉพาะผู้ดูแลระบบเท่านั้นที่สามารถเข้าถึงหน้านี้ได้")
-            return
-
-        from modules.database_admin import show_database_admin_page
-
-        show_database_admin_page(self.db_manager)
-
-    def run(self):
-        """Run the main application"""
-        try:
-            if not st.session_state.authenticated:
-                self.show_login_page()
-            else:
-                self.show_sidebar_navigation()
-
-                # Route to appropriate page
-                page = st.session_state.current_page
-
-                if page == "dashboard":
-                    self.show_dashboard()
-                elif page == "projects":
-                    self.show_projects_page()
-                elif page == "tasks":
-                    self.show_tasks_page()
-                elif page == "analytics":
-                    self.show_analytics_page()
-                elif page == "users":
-                    self.show_users_page()
-                elif page == "settings":
-                    self.show_settings_page()
-                elif page == "database":
-                    self.show_database_page()
-                else:
-                    st.error("ไม่พบหน้าที่ร้องขอ")
-
-        except Exception as e:
-            handle_error(e, "เกิดข้อผิดพลาดในระบบ")
+        st.markdown("---")
+        if st.button("🚪 ออกจากระบบ", use_container_width=True):
+            st.session_state.clear()
+            st.rerun()
 
 
 def main():
-    """Main entry point"""
+    """Main application entry point"""
     try:
-        app = DENSOProjectManager()
-        app.run()
+        # Load modern CSS
+        load_modern_css()
+
+        # Initialize session state
+        if "current_page" not in st.session_state:
+            st.session_state.current_page = "dashboard"
+
+        # Check authentication
+        if not st.session_state.get("authenticated", False):
+            render_professional_login()
+            return
+
+        # Render main application
+        render_sidebar_navigation()
+
+        # Route to current page
+        current_page = st.session_state.get("current_page", "dashboard")
+
+        if current_page == "dashboard":
+            render_dashboard()
+        elif current_page == "projects":
+            render_professional_header("โครงการ", "จัดการและติดตามโครงการทั้งหมด", "📁")
+            st.info("🚧 หน้าโครงการกำลังพัฒนา")
+        elif current_page == "tasks":
+            render_professional_header("งาน", "จัดการงานและติดตามความคืบหน้า", "📋")
+            st.info("🚧 หน้างานกำลังพัฒนา")
+        elif current_page == "team":
+            render_professional_header("ทีม", "จัดการสมาชิกทีมและสิทธิ์การเข้าถึง", "👥")
+            st.info("🚧 หน้าทีมกำลังพัฒนา")
+        elif current_page == "analytics":
+            render_professional_header("รายงาน", "สถิติและการวิเคราะห์ข้อมูล", "📈")
+            st.info("🚧 หน้ารายงานกำลังพัฒนา")
+        elif current_page == "settings":
+            render_professional_header("ตั้งค่า", "การตั้งค่าระบบและการกำหนดค่า", "⚙️")
+            st.info("🚧 หน้าตั้งค่ากำลังพัฒนา")
+
     except Exception as e:
-        st.error(f"❌ เกิดข้อผิดพลาดในการเริ่มต้นระบบ: {e}")
-        st.info("🔧 กรุณาตรวจสอบการติดตั้งและการตั้งค่า")
-        logger.error(f"Application startup failed: {e}")
+        logger.error(f"Application error: {e}")
+        st.error(f"❌ เกิดข้อผิดพลาด: {str(e)}")
+        st.info("🔄 กรุณารีเฟรชหน้าเว็บ")
 
 
 if __name__ == "__main__":

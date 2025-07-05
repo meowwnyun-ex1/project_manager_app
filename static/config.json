@@ -1,0 +1,15 @@
+{
+  "cdn": {
+    "use_cdn": false,
+    "base_url": "https://cdn.denso.com/sdx/"
+  },
+  "cache": {
+    "static_files_cache_days": 30,
+    "image_cache_days": 7
+  },
+  "compression": {
+    "enable_gzip": true,
+    "minify_css": true,
+    "minify_js": true
+  }
+}

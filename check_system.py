@@ -65,7 +65,7 @@ def check_packages():
         "pandas",
         "plotly",
         "bcrypt",
-        "pyyaml",
+        "yaml",
         "openpyxl",
     ]
 
@@ -85,26 +85,21 @@ def test_database():
     """ทดสอบการเชื่อมต่อฐานข้อมูล"""
     try:
         import pyodbc
+        import toml
 
         if not os.path.exists(".streamlit/secrets.toml"):
             print("❌ ไม่พบ secrets.toml")
             return False
 
-        # อ่าน secrets.toml
-        import toml
-
         config = toml.load(".streamlit/secrets.toml")
         db = config["database"]
 
-        # Connection string
+        # Connection string สำหรับ LocalDB (ไม่ใช้ encryption)
         conn_str = (
             f"DRIVER={{{db['driver']}}};"
             f"SERVER={db['server']};"
             f"DATABASE={db['database']};"
-            f"UID={db['username']};"
-            f"PWD={db['password']};"
-            "TrustServerCertificate=yes;"
-            "Encrypt=yes;"
+            "Trusted_Connection=yes;"
         )
 
         print(f"🔗 เชื่อมต่อ: {db['server']}")
@@ -112,23 +107,19 @@ def test_database():
 
         with pyodbc.connect(conn_str, timeout=10) as conn:
             cursor = conn.cursor()
-            cursor.execute(
-                "SELECT @@SERVERNAME, DB_NAME(), COUNT(*) FROM INFORMATION_SCHEMA.TABLES"
-            )
-            server, database, table_count = cursor.fetchone()
+            cursor.execute("SELECT @@SERVERNAME, DB_NAME()")
+            server, database = cursor.fetchone()
 
             print(f"✅ เชื่อมต่อสำเร็จ")
             print(f"   Server: {server}")
             print(f"   Database: {database}")
-            print(f"   Tables: {table_count}")
-
             return True
 
     except ImportError:
         print("❌ ขาด pyodbc หรือ toml")
         return False
     except Exception as e:
-        print(f"❌ เชื่อมต่อไม่สำเร็จ: {str(e)[:100]}")
+        print(f"❌ เชื่อมต่อไม่สำเร็จ: {str(e)}")
         return False
 
 
