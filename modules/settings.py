@@ -1,557 +1,827 @@
 #!/usr/bin/env python3
 """
 modules/settings.py
-Complete Settings Management System for DENSO Project Manager Pro
+SDX Project Manager - Complete Settings Management Core
+Enterprise-grade configuration system with validation and audit
 """
 
-import streamlit as st
+import logging
 import json
 from datetime import datetime
-from typing import Dict, List, Any
-import logging
+from typing import Dict, List, Any, Optional, Union
+from dataclasses import dataclass, asdict
+from enum import Enum
+import re
 
 logger = logging.getLogger(__name__)
 
 
+class SettingType(Enum):
+    """Setting data types enumeration"""
+
+    STRING = "string"
+    INTEGER = "integer"
+    FLOAT = "float"
+    BOOLEAN = "boolean"
+    JSON = "json"
+    EMAIL = "email"
+    URL = "url"
+    PASSWORD = "password"
+
+
+@dataclass
+class SettingDefinition:
+    """Complete setting definition with all properties"""
+
+    key: str
+    display_name: str
+    description: str
+    setting_type: SettingType
+    default_value: Any
+    is_required: bool = True
+    is_sensitive: bool = False
+    validation_rules: Dict[str, Any] = None
+    category: str = "General"
+    subcategory: str = "general"
+    is_system: bool = False
+    help_text: str = ""
+    display_order: int = 0
+
+
 class SettingsManager:
-    """System settings management with full functionality"""
+    """Complete enterprise settings management system"""
 
     def __init__(self, db_manager):
         self.db = db_manager
+        self.setting_definitions = self._initialize_all_definitions()
+        self._create_tables()
+        self._ensure_default_settings()
 
-    def get_system_info(self) -> Dict[str, Any]:
-        """Get system information"""
+    def _create_tables(self):
+        """Create all settings-related tables"""
         try:
-            # Get database info
-            db_info = self.db.execute_query(
-                "SELECT @@VERSION as Version, @@SERVERNAME as ServerName, DB_NAME() as DatabaseName"
+            # Main settings table
+            settings_table = """
+            CREATE TABLE IF NOT EXISTS settings (
+                id SERIAL PRIMARY KEY,
+                key VARCHAR(255) UNIQUE NOT NULL,
+                value TEXT,
+                setting_type VARCHAR(50) NOT NULL,
+                category VARCHAR(100) DEFAULT 'General',
+                subcategory VARCHAR(100) DEFAULT 'general',
+                is_system BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-            db_details = db_info[0] if db_info else {}
-
-            # Get table counts
-            table_counts = self.db.execute_query(
-                """
-                SELECT 
-                    (SELECT COUNT(*) FROM Users) as Users,
-                    (SELECT COUNT(*) FROM Projects) as Projects,
-                    (SELECT COUNT(*) FROM Tasks) as Tasks,
-                    (SELECT COUNT(*) FROM SystemSettings) as Settings
             """
-            )
-            counts = table_counts[0] if table_counts else {}
 
-            return {
-                "app_name": "DENSO Project Manager Pro",
-                "version": "2.0.0",
-                "database_server": db_details.get("ServerName", "Unknown"),
-                "database_name": db_details.get("DatabaseName", "Unknown"),
-                "database_version": db_details.get("Version", "Unknown"),
-                "total_users": counts.get("Users", 0),
-                "total_projects": counts.get("Projects", 0),
-                "total_tasks": counts.get("Tasks", 0),
-                "last_updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            }
+            # Settings audit log
+            audit_table = """
+            CREATE TABLE IF NOT EXISTS setting_audit_log (
+                id SERIAL PRIMARY KEY,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                user_id INTEGER,
+                username VARCHAR(255),
+                action VARCHAR(50),
+                setting_key VARCHAR(255),
+                old_value TEXT,
+                new_value TEXT,
+                ip_address VARCHAR(45),
+                user_agent TEXT
+            )
+            """
+
+            # Settings backup table
+            backup_table = """
+            CREATE TABLE IF NOT EXISTS settings_backup (
+                id SERIAL PRIMARY KEY,
+                backup_name VARCHAR(255),
+                backup_data JSONB,
+                created_by INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+
+            for table_sql in [settings_table, audit_table, backup_table]:
+                self.db.execute_query(table_sql)
+
+            # Create indexes
+            indexes = [
+                "CREATE INDEX IF NOT EXISTS idx_settings_key ON settings(key)",
+                "CREATE INDEX IF NOT EXISTS idx_settings_category ON settings(category)",
+                "CREATE INDEX IF NOT EXISTS idx_audit_setting_key ON setting_audit_log(setting_key)",
+                "CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON setting_audit_log(timestamp)",
+            ]
+
+            for index_sql in indexes:
+                self.db.execute_query(index_sql)
+
         except Exception as e:
-            logger.error(f"Error getting system info: {e}")
-            return {
-                "app_name": "DENSO Project Manager Pro",
-                "version": "2.0.0",
-                "error": str(e),
-            }
+            logger.error(f"Error creating settings tables: {e}")
 
-    def get_all_settings(self) -> Dict[str, Any]:
-        """Get all system settings"""
+    def _initialize_all_definitions(self) -> Dict[str, SettingDefinition]:
+        """Initialize complete system setting definitions"""
+        definitions = {}
+
+        # Application Settings
+        app_definitions = [
+            SettingDefinition(
+                key="app_name",
+                display_name="ชื่อแอปพลิเคชัน",
+                description="ชื่อที่แสดงในหัวเรื่องและส่วนติดต่อ",
+                setting_type=SettingType.STRING,
+                default_value="SDX Project Manager",
+                category="Application",
+                subcategory="basic",
+                is_system=True,
+                help_text="ชื่อนี้จะแสดงในทุกหน้าของระบบ",
+                display_order=1,
+            ),
+            SettingDefinition(
+                key="app_version",
+                display_name="เวอร์ชันแอปพลิเคชัน",
+                description="เวอร์ชันปัจจุบันของระบบ",
+                setting_type=SettingType.STRING,
+                default_value="2.5.0",
+                category="Application",
+                subcategory="basic",
+                is_system=True,
+                help_text="เวอร์ชันระบบสำหรับการอ้างอิง",
+                display_order=2,
+            ),
+            SettingDefinition(
+                key="company_name",
+                display_name="ชื่อบริษัท",
+                description="ชื่อองค์กรที่ใช้ระบบ",
+                setting_type=SettingType.STRING,
+                default_value="DENSO Innovation",
+                category="Application",
+                subcategory="basic",
+                help_text="ชื่อบริษัทที่จะแสดงในรายงานและเอกสาร",
+                display_order=3,
+            ),
+            SettingDefinition(
+                key="default_language",
+                display_name="ภาษาเริ่มต้น",
+                description="ภาษาที่ใช้ในระบบ",
+                setting_type=SettingType.STRING,
+                default_value="th",
+                category="Application",
+                subcategory="localization",
+                validation_rules={"pattern": r"^(th|en)$"},
+                help_text="ตัวเลือก: th (ไทย), en (อังกฤษ)",
+                display_order=4,
+            ),
+            SettingDefinition(
+                key="default_timezone",
+                display_name="เขตเวลาเริ่มต้น",
+                description="เขตเวลาที่ใช้ในระบบ",
+                setting_type=SettingType.STRING,
+                default_value="Asia/Bangkok",
+                category="Application",
+                subcategory="localization",
+                help_text="เขตเวลาสำหรับการแสดงวันที่และเวลา",
+                display_order=5,
+            ),
+        ]
+
+        # Security Settings
+        security_definitions = [
+            SettingDefinition(
+                key="session_timeout",
+                display_name="หมดเวลาเซสชัน (นาที)",
+                description="เวลาหมดอายุเซสชันผู้ใช้",
+                setting_type=SettingType.INTEGER,
+                default_value=480,
+                category="Security",
+                subcategory="authentication",
+                validation_rules={"min_value": 30, "max_value": 1440},
+                help_text="ระหว่าง 30-1440 นาที (0.5-24 ชั่วโมง)",
+                display_order=10,
+            ),
+            SettingDefinition(
+                key="password_min_length",
+                display_name="ความยาวรหัสผ่านขั้นต่ำ",
+                description="จำนวนตัวอักษรขั้นต่ำของรหัสผ่าน",
+                setting_type=SettingType.INTEGER,
+                default_value=8,
+                category="Security",
+                subcategory="password",
+                validation_rules={"min_value": 6, "max_value": 32},
+                help_text="แนะนำ 8-16 ตัวอักษร",
+                display_order=11,
+            ),
+            SettingDefinition(
+                key="password_require_uppercase",
+                display_name="ต้องมีตัวพิมพ์ใหญ่",
+                description="รหัสผ่านต้องมีตัวอักษรพิมพ์ใหญ่",
+                setting_type=SettingType.BOOLEAN,
+                default_value=True,
+                category="Security",
+                subcategory="password",
+                display_order=12,
+            ),
+            SettingDefinition(
+                key="password_require_numbers",
+                display_name="ต้องมีตัวเลข",
+                description="รหัสผ่านต้องมีตัวเลข",
+                setting_type=SettingType.BOOLEAN,
+                default_value=True,
+                category="Security",
+                subcategory="password",
+                display_order=13,
+            ),
+            SettingDefinition(
+                key="max_login_attempts",
+                display_name="จำนวนการเข้าสู่ระบบสูงสุด",
+                description="จำนวนครั้งที่พยายามเข้าสู่ระบบก่อนล็อก",
+                setting_type=SettingType.INTEGER,
+                default_value=5,
+                category="Security",
+                subcategory="authentication",
+                validation_rules={"min_value": 3, "max_value": 10},
+                help_text="แนะนำ 3-5 ครั้ง",
+                display_order=14,
+            ),
+            SettingDefinition(
+                key="enable_2fa",
+                display_name="เปิดใช้ 2FA",
+                description="การยืนยันตัวตน 2 ขั้นตอน",
+                setting_type=SettingType.BOOLEAN,
+                default_value=False,
+                category="Security",
+                subcategory="authentication",
+                help_text="เพิ่มความปลอดภัยด้วยการยืนยัน 2 ขั้นตอน",
+                display_order=15,
+            ),
+        ]
+
+        # Database Settings
+        db_definitions = [
+            SettingDefinition(
+                key="db_pool_size",
+                display_name="Database Pool Size",
+                description="จำนวน connection pool",
+                setting_type=SettingType.INTEGER,
+                default_value=10,
+                category="Database",
+                subcategory="performance",
+                validation_rules={"min_value": 5, "max_value": 100},
+                help_text="จำนวน connection ที่เปิดพร้อมกัน",
+                display_order=20,
+            ),
+            SettingDefinition(
+                key="db_timeout",
+                display_name="Database Timeout (วินาที)",
+                description="หมดเวลาการเชื่อมต่อฐานข้อมูล",
+                setting_type=SettingType.INTEGER,
+                default_value=30,
+                category="Database",
+                subcategory="performance",
+                validation_rules={"min_value": 10, "max_value": 300},
+                help_text="เวลารอการตอบสนองจากฐานข้อมูล",
+                display_order=21,
+            ),
+            SettingDefinition(
+                key="enable_query_logging",
+                display_name="เปิด Query Logging",
+                description="บันทึกการ query ฐานข้อมูล",
+                setting_type=SettingType.BOOLEAN,
+                default_value=False,
+                category="Database",
+                subcategory="monitoring",
+                help_text="อาจส่งผลต่อประสิทธิภาพ",
+                display_order=22,
+            ),
+        ]
+
+        # Email Settings
+        email_definitions = [
+            SettingDefinition(
+                key="smtp_host",
+                display_name="SMTP Server",
+                description="เซิร์ฟเวอร์ส่งอีเมล",
+                setting_type=SettingType.STRING,
+                default_value="smtp.gmail.com",
+                category="Email",
+                subcategory="smtp",
+                validation_rules={"pattern": r"^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"},
+                help_text="ที่อยู่เซิร์ฟเวอร์ SMTP",
+                display_order=30,
+            ),
+            SettingDefinition(
+                key="smtp_port",
+                display_name="SMTP Port",
+                description="พอร์ตเซิร์ฟเวอร์อีเมล",
+                setting_type=SettingType.INTEGER,
+                default_value=587,
+                category="Email",
+                subcategory="smtp",
+                validation_rules={"min_value": 1, "max_value": 65535},
+                help_text="พอร์ตมาตรฐาน: 25, 465, 587",
+                display_order=31,
+            ),
+            SettingDefinition(
+                key="smtp_use_tls",
+                display_name="ใช้ TLS",
+                description="เปิดใช้การเข้ารหัส TLS",
+                setting_type=SettingType.BOOLEAN,
+                default_value=True,
+                category="Email",
+                subcategory="smtp",
+                help_text="แนะนำให้เปิดเพื่อความปลอดภัย",
+                display_order=32,
+            ),
+            SettingDefinition(
+                key="from_email",
+                display_name="อีเมลผู้ส่ง",
+                description="อีเมลที่ใช้ส่งจากระบบ",
+                setting_type=SettingType.EMAIL,
+                default_value="noreply@denso-innovation.com",
+                category="Email",
+                subcategory="general",
+                help_text="อีเมลที่จะแสดงเป็นผู้ส่ง",
+                display_order=33,
+            ),
+        ]
+
+        # Notification Settings
+        notification_definitions = [
+            SettingDefinition(
+                key="enable_email_notifications",
+                display_name="เปิดการแจ้งเตือนอีเมล",
+                description="ส่งการแจ้งเตือนทางอีเมล",
+                setting_type=SettingType.BOOLEAN,
+                default_value=True,
+                category="Notifications",
+                subcategory="email",
+                display_order=40,
+            ),
+            SettingDefinition(
+                key="slack_webhook_url",
+                display_name="Slack Webhook URL",
+                description="URL สำหรับส่งการแจ้งเตือน Slack",
+                setting_type=SettingType.URL,
+                default_value="",
+                category="Notifications",
+                subcategory="slack",
+                is_required=False,
+                is_sensitive=True,
+                help_text="URL webhook จาก Slack app",
+                display_order=41,
+            ),
+            SettingDefinition(
+                key="enable_slack_notifications",
+                display_name="เปิดการแจ้งเตือน Slack",
+                description="ส่งการแจ้งเตือนไป Slack",
+                setting_type=SettingType.BOOLEAN,
+                default_value=False,
+                category="Notifications",
+                subcategory="slack",
+                display_order=42,
+            ),
+        ]
+
+        # Performance Settings
+        performance_definitions = [
+            SettingDefinition(
+                key="cache_timeout",
+                display_name="Cache Timeout (วินาที)",
+                description="เวลาหมดอายุ cache",
+                setting_type=SettingType.INTEGER,
+                default_value=300,
+                category="Performance",
+                subcategory="caching",
+                validation_rules={"min_value": 60, "max_value": 3600},
+                help_text="เวลาเก็บข้อมูลใน cache",
+                display_order=50,
+            ),
+            SettingDefinition(
+                key="enable_compression",
+                display_name="เปิดการบีบอัดข้อมูล",
+                description="บีบอัดข้อมูลเพื่อลดขนาด",
+                setting_type=SettingType.BOOLEAN,
+                default_value=True,
+                category="Performance",
+                subcategory="optimization",
+                help_text="ช่วยลดเวลาโหลดหน้าเว็บ",
+                display_order=51,
+            ),
+            SettingDefinition(
+                key="max_file_upload_size",
+                display_name="ขนาดไฟล์อัปโหลดสูงสุด (MB)",
+                description="ขนาดไฟล์สูงสุดที่อนุญาต",
+                setting_type=SettingType.INTEGER,
+                default_value=50,
+                category="Performance",
+                subcategory="uploads",
+                validation_rules={"min_value": 1, "max_value": 1000},
+                help_text="ขนาดไฟล์ในหน่วย MB",
+                display_order=52,
+            ),
+        ]
+
+        # Combine all definitions
+        all_definitions = (
+            app_definitions
+            + security_definitions
+            + db_definitions
+            + email_definitions
+            + notification_definitions
+            + performance_definitions
+        )
+
+        for definition in all_definitions:
+            definitions[definition.key] = definition
+
+        return definitions
+
+    def _ensure_default_settings(self):
+        """Ensure all default settings exist in database"""
         try:
-            self._ensure_settings_table()
-
-            settings_data = self.db.execute_query(
-                "SELECT SettingKey, SettingValue FROM SystemSettings"
-            )
-            settings = {}
-
-            for row in settings_data:
-                try:
-                    # Try to parse JSON values
-                    settings[row["SettingKey"]] = json.loads(row["SettingValue"])
-                except (json.JSONDecodeError, TypeError):
-                    # If not JSON, store as string
-                    settings[row["SettingKey"]] = row["SettingValue"]
-
-            # Ensure default settings exist
-            default_settings = self._get_default_settings()
-            for key, value in default_settings.items():
-                if key not in settings:
-                    settings[key] = value
-                    self.update_setting(key, value)
-
-            return settings
+            for key, definition in self.setting_definitions.items():
+                existing = self.get_setting(key)
+                if existing is None:
+                    self.create_setting(
+                        key=key,
+                        value=definition.default_value,
+                        setting_type=definition.setting_type.value,
+                        category=definition.category,
+                        subcategory=definition.subcategory,
+                        is_system=definition.is_system,
+                    )
         except Exception as e:
-            logger.error(f"Error getting settings: {e}")
-            return self._get_default_settings()
+            logger.error(f"Error ensuring default settings: {e}")
 
-    def update_setting(self, key: str, value: Any) -> bool:
-        """Update a system setting"""
+    def get_setting(self, key: str) -> Optional[Dict[str, Any]]:
+        """Get setting by key"""
         try:
-            self._ensure_settings_table()
+            query = "SELECT * FROM settings WHERE key = %s"
+            result = self.db.fetch_one(query, (key,))
 
-            # Convert value to JSON string if needed
-            if isinstance(value, (dict, list)):
-                json_value = json.dumps(value)
-            else:
-                json_value = str(value)
+            if result:
+                return {
+                    "id": result[0],
+                    "key": result[1],
+                    "value": self._deserialize_value(result[2], result[3]),
+                    "setting_type": result[3],
+                    "category": result[4],
+                    "subcategory": result[5],
+                    "is_system": result[6],
+                    "created_at": result[7],
+                    "updated_at": result[8],
+                }
+            return None
+        except Exception as e:
+            logger.error(f"Error getting setting {key}: {e}")
+            return None
 
-            # Check if setting exists
-            existing = self.db.execute_query(
-                "SELECT SettingKey FROM SystemSettings WHERE SettingKey = ?", (key,)
-            )
+    def get_setting_value(self, key: str, default=None) -> Any:
+        """Get setting value only"""
+        setting = self.get_setting(key)
+        if setting:
+            return setting["value"]
 
-            if existing:
-                # Update existing
-                query = """
-                UPDATE SystemSettings 
-                SET SettingValue = ?, UpdatedDate = GETDATE() 
-                WHERE SettingKey = ?
-                """
-                self.db.execute_non_query(query, (json_value, key))
-            else:
-                # Insert new
-                query = """
-                INSERT INTO SystemSettings (SettingKey, SettingValue, CreatedDate, UpdatedDate)
-                VALUES (?, ?, GETDATE(), GETDATE())
-                """
-                self.db.execute_non_query(query, (key, json_value))
+        definition = self.setting_definitions.get(key)
+        if definition:
+            return definition.default_value
 
-            return True
+        return default
+
+    def update_setting(self, key: str, value: Any, user_info: Dict = None) -> bool:
+        """Update setting with audit trail"""
+        try:
+            definition = self.setting_definitions.get(key)
+            if not definition:
+                logger.error(f"Setting definition not found: {key}")
+                return False
+
+            # Get old value for audit
+            old_setting = self.get_setting(key)
+            old_value = old_setting["value"] if old_setting else None
+
+            # Validate value
+            if not self._validate_value(value, definition):
+                return False
+
+            # Serialize value
+            serialized_value = self._serialize_value(value, definition.setting_type)
+
+            query = """
+            UPDATE settings 
+            SET value = %s, updated_at = CURRENT_TIMESTAMP 
+            WHERE key = %s
+            """
+
+            affected_rows = self.db.execute_query(query, (serialized_value, key))
+
+            if affected_rows > 0:
+                # Log change
+                self._log_setting_change(key, old_value, value, user_info)
+                return True
+
+            return False
+
         except Exception as e:
             logger.error(f"Error updating setting {key}: {e}")
             return False
 
-    def delete_setting(self, key: str) -> bool:
-        """Delete a system setting"""
+    def create_setting(
+        self,
+        key: str,
+        value: Any,
+        setting_type: str,
+        category: str = "General",
+        subcategory: str = "general",
+        is_system: bool = False,
+    ) -> bool:
+        """Create new setting"""
         try:
-            query = "DELETE FROM SystemSettings WHERE SettingKey = ?"
-            self.db.execute_non_query(query, (key,))
+            serialized_value = self._serialize_value(value, SettingType(setting_type))
+
+            query = """
+            INSERT INTO settings (key, value, setting_type, category, subcategory, is_system)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """
+
+            self.db.execute_query(
+                query,
+                (key, serialized_value, setting_type, category, subcategory, is_system),
+            )
             return True
+
         except Exception as e:
-            logger.error(f"Error deleting setting {key}: {e}")
+            logger.error(f"Error creating setting {key}: {e}")
             return False
 
-    def test_database_connection(self) -> Dict[str, Any]:
-        """Test database connection and get performance info"""
+    def get_settings_by_category(self, category: str) -> List[Dict[str, Any]]:
+        """Get all settings in a category"""
         try:
-            start_time = datetime.now()
-
-            # Test basic query
-            result = self.db.execute_query("SELECT 1 as test")
-
-            end_time = datetime.now()
-            response_time = (
-                end_time - start_time
-            ).total_seconds() * 1000  # milliseconds
-
-            # Get database statistics
-            db_stats = self.db.execute_query(
-                """
-                SELECT 
-                    (SELECT COUNT(*) FROM sys.tables) as TableCount,
-                    (SELECT COUNT(*) FROM sys.indexes) as IndexCount
+            query = """
+            SELECT * FROM settings 
+            WHERE category = %s 
+            ORDER BY subcategory, key
             """
-            )
+            results = self.db.fetch_all(query, (category,))
 
-            stats = db_stats[0] if db_stats else {}
+            settings = []
+            for result in results:
+                setting_dict = {
+                    "id": result[0],
+                    "key": result[1],
+                    "value": self._deserialize_value(result[2], result[3]),
+                    "setting_type": result[3],
+                    "category": result[4],
+                    "subcategory": result[5],
+                    "is_system": result[6],
+                    "created_at": result[7],
+                    "updated_at": result[8],
+                }
+                # Add definition info
+                definition = self.setting_definitions.get(result[1])
+                if definition:
+                    setting_dict.update(
+                        {
+                            "display_name": definition.display_name,
+                            "description": definition.description,
+                            "help_text": definition.help_text,
+                            "is_sensitive": definition.is_sensitive,
+                            "validation_rules": definition.validation_rules,
+                        }
+                    )
+                settings.append(setting_dict)
 
-            return {
-                "status": "success",
-                "connection_time": f"{response_time:.2f}ms",
-                "table_count": stats.get("TableCount", 0),
-                "index_count": stats.get("IndexCount", 0),
-                "timestamp": datetime.now().isoformat(),
-            }
+            return settings
+
         except Exception as e:
-            return {
-                "status": "error",
-                "error": str(e),
-                "timestamp": datetime.now().isoformat(),
-            }
-
-    def backup_database(self) -> Dict[str, Any]:
-        """Create database backup (simulation)"""
-        try:
-            # In a real implementation, this would create an actual backup
-            backup_info = {
-                "backup_id": f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-                "timestamp": datetime.now().isoformat(),
-                "tables_backed_up": ["Users", "Projects", "Tasks", "SystemSettings"],
-                "status": "completed",
-                "size_mb": "12.5",  # Simulated size
-            }
-
-            # Log backup event
-            logger.info(f"Database backup created: {backup_info['backup_id']}")
-
-            return backup_info
-        except Exception as e:
-            return {
-                "status": "error",
-                "error": str(e),
-                "timestamp": datetime.now().isoformat(),
-            }
-
-    def get_audit_log(self, limit: int = 100) -> List[Dict[str, Any]]:
-        """Get system audit log"""
-        try:
-            # In a real implementation, this would query an audit log table
-            # For now, we'll simulate with recent settings changes
-            recent_settings = self.db.execute_query(
-                """
-                SELECT TOP (?) SettingKey, UpdatedDate, 'Setting Updated' as Action, 'System' as UserName
-                FROM SystemSettings 
-                WHERE UpdatedDate IS NOT NULL
-                ORDER BY UpdatedDate DESC
-            """,
-                (limit,),
-            )
-
-            return recent_settings
-        except Exception as e:
-            logger.error(f"Error getting audit log: {e}")
+            logger.error(f"Error getting settings for category {category}: {e}")
             return []
 
-    def _ensure_settings_table(self):
-        """Ensure SystemSettings table exists"""
+    def get_setting_definition(self, key: str) -> Optional[SettingDefinition]:
+        """Get setting definition"""
+        return self.setting_definitions.get(key)
+
+    def get_all_categories(self) -> List[str]:
+        """Get all setting categories"""
+        return list(set(d.category for d in self.setting_definitions.values()))
+
+    def _validate_value(self, value: Any, definition: SettingDefinition) -> bool:
+        """Validate setting value"""
         try:
-            # Check if table exists
-            table_check = self.db.execute_query(
-                """
-                SELECT COUNT(*) as count 
-                FROM INFORMATION_SCHEMA.TABLES 
-                WHERE TABLE_NAME = 'SystemSettings'
+            if definition.is_required and (value is None or value == ""):
+                logger.error(f"Setting {definition.key} is required")
+                return False
+
+            if definition.setting_type == SettingType.EMAIL:
+                if value and not re.match(
+                    r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$", str(value)
+                ):
+                    logger.error(f"Invalid email format: {value}")
+                    return False
+
+            elif definition.setting_type == SettingType.URL:
+                if value and not re.match(r"^https?://.*", str(value)):
+                    logger.error(f"Invalid URL format: {value}")
+                    return False
+
+            elif definition.setting_type == SettingType.JSON:
+                if value:
+                    try:
+                        json.loads(value)
+                    except json.JSONDecodeError:
+                        logger.error(f"Invalid JSON format: {value}")
+                        return False
+
+            if definition.validation_rules:
+                rules = definition.validation_rules
+
+                if definition.setting_type == SettingType.STRING:
+                    if (
+                        rules.get("min_length")
+                        and len(str(value)) < rules["min_length"]
+                    ):
+                        return False
+                    if (
+                        rules.get("max_length")
+                        and len(str(value)) > rules["max_length"]
+                    ):
+                        return False
+                    if rules.get("pattern") and not re.match(
+                        rules["pattern"], str(value)
+                    ):
+                        return False
+
+                elif definition.setting_type in [
+                    SettingType.INTEGER,
+                    SettingType.FLOAT,
+                ]:
+                    if (
+                        rules.get("min_value") is not None
+                        and value < rules["min_value"]
+                    ):
+                        return False
+                    if (
+                        rules.get("max_value") is not None
+                        and value > rules["max_value"]
+                    ):
+                        return False
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Error validating value: {e}")
+            return False
+
+    def _serialize_value(self, value: Any, setting_type: SettingType) -> str:
+        """Serialize value for storage"""
+        if value is None:
+            return ""
+
+        if setting_type == SettingType.JSON:
+            return json.dumps(value)
+        elif setting_type == SettingType.BOOLEAN:
+            return "true" if value else "false"
+        else:
+            return str(value)
+
+    def _deserialize_value(self, value: str, setting_type: str) -> Any:
+        """Deserialize value from storage"""
+        if not value:
+            return None
+
+        try:
+            setting_type_enum = SettingType(setting_type)
+
+            if setting_type_enum == SettingType.INTEGER:
+                return int(value)
+            elif setting_type_enum == SettingType.FLOAT:
+                return float(value)
+            elif setting_type_enum == SettingType.BOOLEAN:
+                return value.lower() == "true"
+            elif setting_type_enum == SettingType.JSON:
+                return json.loads(value)
+            else:
+                return value
+
+        except (ValueError, json.JSONDecodeError) as e:
+            logger.error(f"Error deserializing value {value}: {e}")
+            return value
+
+    def _log_setting_change(
+        self, key: str, old_value: Any, new_value: Any, user_info: Dict = None
+    ):
+        """Log setting changes for audit"""
+        try:
+            if not user_info:
+                user_info = {}
+
+            # Don't log sensitive values
+            definition = self.setting_definitions.get(key)
+            if definition and definition.is_sensitive:
+                old_value = "[HIDDEN]"
+                new_value = "[HIDDEN]"
+
+            query = """
+            INSERT INTO setting_audit_log 
+            (user_id, username, action, setting_key, old_value, new_value, ip_address, user_agent)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """
+
+            self.db.execute_query(
+                query,
+                (
+                    user_info.get("user_id"),
+                    user_info.get("username"),
+                    "update",
+                    key,
+                    str(old_value) if old_value is not None else None,
+                    str(new_value) if new_value is not None else None,
+                    user_info.get("ip_address"),
+                    user_info.get("user_agent"),
+                ),
             )
 
-            if not table_check or table_check[0]["count"] == 0:
-                # Create table
-                create_query = """
-                CREATE TABLE SystemSettings (
-                    SettingID INT IDENTITY(1,1) PRIMARY KEY,
-                    SettingKey NVARCHAR(100) UNIQUE NOT NULL,
-                    SettingValue NVARCHAR(MAX),
-                    CreatedDate DATETIME2 DEFAULT GETDATE(),
-                    UpdatedDate DATETIME2 DEFAULT GETDATE()
-                )
-                """
-                self.db.execute_non_query(create_query)
-                logger.info("SystemSettings table created")
         except Exception as e:
-            logger.error(f"Error ensuring settings table: {e}")
+            logger.error(f"Error logging setting change: {e}")
 
-    def _get_default_settings(self) -> Dict[str, Any]:
-        """Get default system settings"""
-        return {
-            "app_name": "DENSO Project Manager Pro",
-            "app_version": "2.0.0",
-            "company_name": "DENSO Corporation",
-            "theme": "light",
-            "language": "th",
-            "timezone": "Asia/Bangkok",
-            "session_timeout": 3600,
-            "max_upload_size": 100,
-            "email_notifications": True,
-            "auto_backup": False,
-            "backup_schedule": "02:00",
-            "backup_retention_days": 90,
-            "default_currency": "THB",
-            "working_hours_start": "08:00",
-            "working_hours_end": "17:00",
-            "weekend_days": ["Saturday", "Sunday"],
-            "company_logo": "/assets/denso-logo.png",
-            "password_policy": {
-                "min_length": 8,
-                "require_uppercase": True,
-                "require_lowercase": True,
-                "require_digits": True,
-                "require_special": True,
-                "history_count": 5,
-            },
-            "security_settings": {
-                "max_login_attempts": 5,
-                "lockout_duration": 900,
-                "session_cookie_secure": False,
-                "force_password_change": False,
-            },
-        }
-
-    def render_settings_ui(self):
-        """Render settings management UI"""
+    def export_settings_backup(self, backup_name: str = None) -> Dict[str, Any]:
+        """Export settings for backup"""
         try:
-            st.title("⚙️ การตั้งค่าระบบ")
+            query = "SELECT key, value, setting_type, category FROM settings"
+            results = self.db.fetch_all(query)
 
-            # Create tabs for different setting categories
-            tab1, tab2, tab3, tab4 = st.tabs(
-                ["🔧 ทั่วไป", "🔒 ความปลอดภัย", "📧 อีเมล", "🗄️ ฐานข้อมูล"]
-            )
+            backup = {
+                "timestamp": datetime.now().isoformat(),
+                "version": "2.5.0",
+                "backup_name": backup_name
+                or f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                "settings": {},
+            }
 
-            settings = self.get_all_settings()
+            for result in results:
+                key, value, setting_type, category = result
+                definition = self.setting_definitions.get(key)
 
-            with tab1:
-                self._render_general_settings(settings)
+                # Skip sensitive settings in backup
+                if definition and definition.is_sensitive:
+                    continue
 
-            with tab2:
-                self._render_security_settings(settings)
+                backup["settings"][key] = {
+                    "value": self._deserialize_value(value, setting_type),
+                    "type": setting_type,
+                    "category": category,
+                }
 
-            with tab3:
-                self._render_email_settings(settings)
-
-            with tab4:
-                self._render_database_settings(settings)
+            return backup
 
         except Exception as e:
-            st.error(f"Error rendering settings UI: {e}")
+            logger.error(f"Error exporting settings backup: {e}")
+            return {}
 
-    def _render_general_settings(self, settings: Dict[str, Any]):
-        """Render general settings"""
-        st.subheader("การตั้งค่าทั่วไป")
+    def get_audit_logs(
+        self, start_date=None, end_date=None, user_filter=None, limit=100
+    ) -> List[Dict[str, Any]]:
+        """Get audit logs with filters"""
+        try:
+            query = "SELECT * FROM setting_audit_log WHERE 1=1"
+            params = []
 
-        col1, col2 = st.columns(2)
+            if start_date:
+                query += " AND timestamp >= %s"
+                params.append(start_date)
 
-        with col1:
-            app_name = st.text_input("ชื่อแอปพลิเคชัน", value=settings.get("app_name", ""))
-            language = st.selectbox(
-                "ภาษา", ["th", "en"], index=0 if settings.get("language") == "th" else 1
-            )
-            theme = st.selectbox(
-                "ธีม",
-                ["light", "dark"],
-                index=0 if settings.get("theme") == "light" else 1,
-            )
+            if end_date:
+                query += " AND timestamp <= %s"
+                params.append(end_date)
 
-        with col2:
-            timezone = st.selectbox("เขตเวลา", ["Asia/Bangkok", "UTC"], index=0)
-            currency = st.selectbox("สกุลเงิน", ["THB", "USD", "EUR"], index=0)
-            session_timeout = st.number_input(
-                "Session Timeout (วินาที)", value=settings.get("session_timeout", 3600)
-            )
+            if user_filter:
+                query += " AND username ILIKE %s"
+                params.append(f"%{user_filter}%")
 
-        if st.button("💾 บันทึกการตั้งค่าทั่วไป"):
-            updates = {
-                "app_name": app_name,
-                "language": language,
-                "theme": theme,
-                "timezone": timezone,
-                "default_currency": currency,
-                "session_timeout": session_timeout,
-            }
+            query += " ORDER BY timestamp DESC LIMIT %s"
+            params.append(limit)
 
-            success_count = 0
-            for key, value in updates.items():
-                if self.update_setting(key, value):
-                    success_count += 1
+            results = self.db.fetch_all(query, params)
 
-            if success_count == len(updates):
-                st.success("✅ บันทึกการตั้งค่าเรียบร้อยแล้ว")
-            else:
-                st.warning(f"⚠️ บันทึกได้ {success_count}/{len(updates)} รายการ")
-
-    def _render_security_settings(self, settings: Dict[str, Any]):
-        """Render security settings"""
-        st.subheader("การตั้งค่าความปลอดภัย")
-
-        security_settings = settings.get("security_settings", {})
-        password_policy = settings.get("password_policy", {})
-
-        col1, col2 = st.columns(2)
-
-        with col1:
-            st.write("**นโยบายรหัสผ่าน**")
-            min_length = st.number_input(
-                "ความยาวขั้นต่ำ", value=password_policy.get("min_length", 8), min_value=6
-            )
-            require_uppercase = st.checkbox(
-                "ต้องมีตัวพิมพ์ใหญ่", value=password_policy.get("require_uppercase", True)
-            )
-            require_lowercase = st.checkbox(
-                "ต้องมีตัวพิมพ์เล็ก", value=password_policy.get("require_lowercase", True)
-            )
-            require_digits = st.checkbox(
-                "ต้องมีตัวเลข", value=password_policy.get("require_digits", True)
-            )
-            require_special = st.checkbox(
-                "ต้องมีอักขระพิเศษ", value=password_policy.get("require_special", True)
-            )
-
-        with col2:
-            st.write("**การรักษาความปลอดภัย**")
-            max_attempts = st.number_input(
-                "จำนวนครั้งที่ผิดสูงสุด", value=security_settings.get("max_login_attempts", 5)
-            )
-            lockout_duration = st.number_input(
-                "ระยะเวลาล็อค (วินาที)",
-                value=security_settings.get("lockout_duration", 900),
-            )
-            force_password_change = st.checkbox(
-                "บังคับเปลี่ยนรหัสผ่าน",
-                value=security_settings.get("force_password_change", False),
-            )
-
-        if st.button("🔒 บันทึกการตั้งค่าความปลอดภัย"):
-            new_password_policy = {
-                "min_length": min_length,
-                "require_uppercase": require_uppercase,
-                "require_lowercase": require_lowercase,
-                "require_digits": require_digits,
-                "require_special": require_special,
-            }
-
-            new_security_settings = {
-                "max_login_attempts": max_attempts,
-                "lockout_duration": lockout_duration,
-                "force_password_change": force_password_change,
-            }
-
-            if self.update_setting(
-                "password_policy", new_password_policy
-            ) and self.update_setting("security_settings", new_security_settings):
-                st.success("✅ บันทึกการตั้งค่าความปลอดภัยเรียบร้อยแล้ว")
-            else:
-                st.error("❌ เกิดข้อผิดพลาดในการบันทึก")
-
-    def _render_email_settings(self, settings: Dict[str, Any]):
-        """Render email settings"""
-        st.subheader("การตั้งค่าอีเมล")
-
-        email_notifications = st.checkbox(
-            "เปิดใช้งานการแจ้งเตือนทางอีเมล", value=settings.get("email_notifications", True)
-        )
-
-        if email_notifications:
-            col1, col2 = st.columns(2)
-
-            with col1:
-                smtp_server = st.text_input(
-                    "SMTP Server", value=settings.get("smtp_server", "")
-                )
-                smtp_port = st.number_input(
-                    "SMTP Port", value=settings.get("smtp_port", 587)
-                )
-                smtp_username = st.text_input(
-                    "SMTP Username", value=settings.get("smtp_username", "")
+            logs = []
+            for result in results:
+                logs.append(
+                    {
+                        "id": result[0],
+                        "timestamp": result[1],
+                        "user_id": result[2],
+                        "username": result[3],
+                        "action": result[4],
+                        "setting_key": result[5],
+                        "old_value": result[6],
+                        "new_value": result[7],
+                        "ip_address": result[8],
+                        "user_agent": result[9],
+                    }
                 )
 
-            with col2:
-                smtp_password = st.text_input("SMTP Password", type="password")
-                from_email = st.text_input(
-                    "From Email", value=settings.get("from_email", "")
-                )
-                use_tls = st.checkbox(
-                    "ใช้ TLS", value=settings.get("smtp_use_tls", True)
-                )
+            return logs
 
-        if st.button("📧 บันทึกการตั้งค่าอีเมล"):
-            email_settings = {
-                "email_notifications": email_notifications,
-                "smtp_server": smtp_server if email_notifications else "",
-                "smtp_port": smtp_port if email_notifications else 587,
-                "smtp_username": smtp_username if email_notifications else "",
-                "from_email": from_email if email_notifications else "",
-                "smtp_use_tls": use_tls if email_notifications else True,
-            }
-
-            success_count = 0
-            for key, value in email_settings.items():
-                if self.update_setting(key, value):
-                    success_count += 1
-
-            if success_count == len(email_settings):
-                st.success("✅ บันทึกการตั้งค่าอีเมลเรียบร้อยแล้ว")
-                if email_notifications:
-                    if st.button("📤 ทดสอบการส่งอีเมล"):
-                        # Test email functionality here
-                        st.info("🔄 กำลังทดสอบการส่งอีเมล...")
-            else:
-                st.error("❌ เกิดข้อผิดพลาดในการบันทึก")
-
-    def _render_database_settings(self, settings: Dict[str, Any]):
-        """Render database settings"""
-        st.subheader("การจัดการฐานข้อมูล")
-
-        # System Information
-        col1, col2 = st.columns(2)
-
-        with col1:
-            st.write("**ข้อมูลระบบ**")
-            system_info = self.get_system_info()
-
-            for key, value in system_info.items():
-                if key != "error":
-                    st.text(f"{key}: {value}")
-
-        with col2:
-            st.write("**การทดสอบการเชื่อมต่อ**")
-            if st.button("🔍 ทดสอบการเชื่อมต่อฐานข้อมูล"):
-                test_result = self.test_database_connection()
-
-                if test_result["status"] == "success":
-                    st.success(f"✅ เชื่อมต่อสำเร็จ ({test_result['connection_time']})")
-                    st.info(
-                        f"📊 ตาราง: {test_result['table_count']}, ดัชนี: {test_result['index_count']}"
-                    )
-                else:
-                    st.error(f"❌ เชื่อมต่อไม่สำเร็จ: {test_result['error']}")
-
-        # Backup Settings
-        st.write("**การสำรองข้อมูล**")
-
-        col3, col4 = st.columns(2)
-
-        with col3:
-            auto_backup = st.checkbox(
-                "สำรองข้อมูลอัตโนมัติ", value=settings.get("auto_backup", False)
-            )
-            backup_schedule = st.time_input(
-                "เวลาสำรองข้อมูล",
-                value=datetime.strptime(
-                    settings.get("backup_schedule", "02:00"), "%H:%M"
-                ).time(),
-            )
-
-        with col4:
-            backup_retention = st.number_input(
-                "เก็บข้อมูลสำรอง (วัน)", value=settings.get("backup_retention_days", 90)
-            )
-
-            if st.button("💾 สำรองข้อมูลทันที"):
-                backup_result = self.backup_database()
-
-                if backup_result["status"] == "completed":
-                    st.success(
-                        f"✅ สำรองข้อมูลเรียบร้อย (ID: {backup_result['backup_id']})"
-                    )
-                    st.info(f"📁 ขนาด: {backup_result['size_mb']} MB")
-                else:
-                    st.error(f"❌ สำรองข้อมูลไม่สำเร็จ: {backup_result['error']}")
-
-        if st.button("🗄️ บันทึกการตั้งค่าฐานข้อมูล"):
-            backup_settings = {
-                "auto_backup": auto_backup,
-                "backup_schedule": backup_schedule.strftime("%H:%M"),
-                "backup_retention_days": backup_retention,
-            }
-
-            success_count = 0
-            for key, value in backup_settings.items():
-                if self.update_setting(key, value):
-                    success_count += 1
-
-            if success_count == len(backup_settings):
-                st.success("✅ บันทึกการตั้งค่าฐานข้อมูลเรียบร้อยแล้ว")
-            else:
-                st.error("❌ เกิดข้อผิดพลาดในการบันทึก")
-
-        # Audit Log
-        if st.checkbox("📋 แสดง Audit Log"):
-            audit_data = self.get_audit_log(50)
-            if audit_data:
-                import pandas as pd
-
-                df = pd.DataFrame(audit_data)
-                st.dataframe(df, use_container_width=True)
+        except Exception as e:
+            logger.error(f"Error getting audit logs: {e}")
+            return []

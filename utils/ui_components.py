@@ -1,489 +1,755 @@
 #!/usr/bin/env python3
 """
 utils/ui_components.py
-UI Components & Helpers for SDX Project Manager
-Modern purple gradient theme components
+Modern UI Components and Theme Management
+Professional interface components for enterprise applications
 """
 
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import datetime
-import pandas as pd
+from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional
+import logging
+
+logger = logging.getLogger(__name__)
 
 
-class UIComponents:
-    """Modern UI components with SDX theme"""
+class ThemeManager:
+    """Modern theme management system"""
 
     @staticmethod
-    def load_custom_css():
-        """Load custom CSS for SDX theme"""
+    def get_theme_colors():
+        """Get current theme color palette"""
+        return {
+            "primary": "#6366f1",
+            "primary_dark": "#4f46e5",
+            "secondary": "#8b5cf6",
+            "success": "#10b981",
+            "warning": "#f59e0b",
+            "error": "#ef4444",
+            "info": "#3b82f6",
+            "background": "#ffffff",
+            "surface": "#f8fafc",
+            "text_primary": "#1e293b",
+            "text_secondary": "#64748b",
+            "border": "#e2e8f0",
+        }
+
+    @staticmethod
+    def apply_custom_css():
+        """Apply enterprise-grade CSS styling"""
+        colors = ThemeManager.get_theme_colors()
+
         st.markdown(
-            """
+            f"""
         <style>
-            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        /* Import modern fonts */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+        
+        /* CSS Variables */
+        :root {{
+            --primary-color: {colors['primary']};
+            --primary-dark: {colors['primary_dark']};
+            --secondary-color: {colors['secondary']};
+            --success-color: {colors['success']};
+            --warning-color: {colors['warning']};
+            --error-color: {colors['error']};
+            --info-color: {colors['info']};
+            --background: {colors['background']};
+            --surface: {colors['surface']};
+            --text-primary: {colors['text_primary']};
+            --text-secondary: {colors['text_secondary']};
+            --border-color: {colors['border']};
+        }}
+        
+        /* Global Styles */
+        html, body, [class*="css"] {{
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            font-feature-settings: 'cv11', 'ss01';
+        }}
+        
+        /* Hide Streamlit Elements */
+        #MainMenu {{visibility: hidden;}}
+        footer {{visibility: hidden;}}
+        header {{visibility: hidden;}}
+        .stDeployButton {{display: none;}}
+        
+        /* Enhanced Sidebar */
+        .css-1d391kg {{
+            background: linear-gradient(180deg, var(--primary-color) 0%, var(--primary-dark) 100%);
+            border-right: none;
+            box-shadow: 4px 0 12px rgba(0,0,0,0.1);
+        }}
+        
+        .css-1d391kg .css-17eq0hr {{
+            color: white;
+            font-weight: 600;
+        }}
+        
+        /* Main Content Area */
+        .main .block-container {{
+            padding: 2rem;
+            background: var(--surface);
+            min-height: 100vh;
+        }}
+        
+        /* Professional Cards */
+        .metric-card {{
+            background: var(--background);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 1.5rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+        }}
+        
+        .metric-card::before {{
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, var(--primary-color), var(--secondary-color));
+        }}
+        
+        .metric-card:hover {{
+            transform: translateY(-4px);
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+        }}
+        
+        /* Enhanced Buttons */
+        .stButton > button {{
+            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            color: white;
+            border: none;
+            border-radius: 12px;
+            padding: 0.75rem 1.5rem;
+            font-weight: 600;
+            font-size: 0.9rem;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 14px 0 rgba(99, 102, 241, 0.39);
+            text-transform: none;
+        }}
+        
+        .stButton > button:hover {{
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(99, 102, 241, 0.5);
+        }}
+        
+        .stButton > button:active {{
+            transform: translateY(0);
+        }}
+        
+        /* Status Badges */
+        .status-badge {{
+            display: inline-flex;
+            align-items: center;
+            padding: 0.375rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }}
+        
+        .status-active {{
+            background: rgba(16, 185, 129, 0.1);
+            color: #059669;
+            border: 1px solid rgba(16, 185, 129, 0.2);
+        }}
+        
+        .status-pending {{
+            background: rgba(245, 158, 11, 0.1);
+            color: #d97706;
+            border: 1px solid rgba(245, 158, 11, 0.2);
+        }}
+        
+        .status-completed {{
+            background: rgba(59, 130, 246, 0.1);
+            color: #2563eb;
+            border: 1px solid rgba(59, 130, 246, 0.2);
+        }}
+        
+        .status-blocked {{
+            background: rgba(239, 68, 68, 0.1);
+            color: #dc2626;
+            border: 1px solid rgba(239, 68, 68, 0.2);
+        }}
+        
+        /* Priority Indicators */
+        .priority-critical {{
+            background: linear-gradient(135deg, #ef4444, #dc2626);
+            color: white;
+        }}
+        
+        .priority-high {{
+            background: linear-gradient(135deg, #f59e0b, #d97706);
+            color: white;
+        }}
+        
+        .priority-medium {{
+            background: linear-gradient(135deg, #3b82f6, #2563eb);
+            color: white;
+        }}
+        
+        .priority-low {{
+            background: linear-gradient(135deg, #10b981, #059669);
+            color: white;
+        }}
+        
+        /* Enhanced Data Tables */
+        .stDataFrame {{
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }}
+        
+        .stDataFrame table {{
+            border-collapse: separate;
+            border-spacing: 0;
+        }}
+        
+        .stDataFrame th {{
+            background: var(--surface);
+            font-weight: 600;
+            color: var(--text-primary);
+            padding: 1rem;
+            border-bottom: 2px solid var(--border-color);
+        }}
+        
+        .stDataFrame td {{
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid var(--border-color);
+        }}
+        
+        .stDataFrame tbody tr:hover {{
+            background: rgba(99, 102, 241, 0.05);
+        }}
+        
+        /* Form Elements */
+        .stTextInput > div > div > input,
+        .stTextArea > div > div > textarea,
+        .stSelectbox > div > div > select {{
+            border: 2px solid var(--border-color);
+            border-radius: 8px;
+            padding: 0.75rem;
+            font-size: 0.9rem;
+            transition: all 0.3s ease;
+        }}
+        
+        .stTextInput > div > div > input:focus,
+        .stTextArea > div > div > textarea:focus,
+        .stSelectbox > div > div > select:focus {{
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+        }}
+        
+        /* Metrics */
+        .metric {{
+            background: var(--background);
+            padding: 1.5rem;
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+            text-align: center;
+            transition: all 0.3s ease;
+        }}
+        
+        .metric:hover {{
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1);
+        }}
+        
+        .metric-value {{
+            font-size: 2rem;
+            font-weight: 800;
+            color: var(--primary-color);
+            line-height: 1;
+            margin-bottom: 0.5rem;
+        }}
+        
+        .metric-label {{
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }}
+        
+        /* Loading States */
+        .loading-spinner {{
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 3rem;
+        }}
+        
+        /* Toast Notifications */
+        .stAlert {{
+            border-radius: 12px;
+            border: none;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }}
+        
+        /* Progress Bars */
+        .stProgress > div > div > div > div {{
+            background: linear-gradient(90deg, var(--primary-color), var(--secondary-color));
+        }}
+        
+        /* Sidebar Navigation */
+        .nav-item {{
+            margin: 0.25rem 0;
+        }}
+        
+        .nav-item button {{
+            width: 100%;
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            border: none;
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }}
+        
+        .nav-item button:hover {{
+            background: rgba(255, 255, 255, 0.2);
+            transform: translateX(4px);
+        }}
+        
+        /* Responsive Design */
+        @media (max-width: 768px) {{
+            .main .block-container {{
+                padding: 1rem;
+            }}
             
-            :root {
-                --primary: #667eea;
-                --secondary: #764ba2;
-                --accent: #f093fb;
-                --success: #10b981;
-                --warning: #f59e0b;
-                --error: #ef4444;
-                --text-primary: #1e293b;
-                --text-secondary: #64748b;
-                --bg-primary: #f8fafc;
-                --bg-secondary: #ffffff;
-                --border: #e2e8f0;
-                --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-            }
+            .metric-card {{
+                padding: 1rem;
+            }}
             
-            .main {
-                background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
-                font-family: 'Inter', sans-serif;
-            }
-            
-            .main-header {
-                background: linear-gradient(135deg, var(--primary), var(--secondary));
-                color: white;
-                padding: 2rem 2rem 3rem;
-                margin: -1rem -1rem 2rem;
-                border-radius: 0 0 20px 20px;
-                box-shadow: var(--shadow);
-            }
-            
-            .main-header h1 {
-                font-size: 2.5rem;
-                font-weight: 700;
-                margin: 0;
-                text-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            }
-            
-            .main-header p {
-                font-size: 1.125rem;
-                margin: 0.5rem 0 0;
-                opacity: 0.9;
-            }
-            
-            .metric-card {
-                background: var(--bg-secondary);
-                border-radius: 16px;
-                padding: 1.5rem;
-                box-shadow: var(--shadow);
-                border: 1px solid var(--border);
-                transition: transform 0.2s ease;
-            }
-            
-            .metric-card:hover {
-                transform: translateY(-2px);
-            }
-            
-            .metric-value {
-                font-size: 2.5rem;
-                font-weight: 700;
-                background: linear-gradient(135deg, var(--primary), var(--secondary));
-                -webkit-background-clip: text;
-                -webkit-text-fill-color: transparent;
-                margin: 0;
-            }
-            
-            .metric-label {
-                color: var(--text-secondary);
-                font-size: 0.875rem;
-                font-weight: 500;
-                margin: 0.5rem 0 0;
-            }
-            
-            .status-badge {
-                display: inline-block;
-                padding: 0.25rem 0.75rem;
-                border-radius: 20px;
-                font-size: 0.75rem;
-                font-weight: 600;
-                text-transform: uppercase;
-                letter-spacing: 0.05em;
-            }
-            
-            .status-active { background: #dcfce7; color: #166534; }
-            .status-pending { background: #fef3c7; color: #92400e; }
-            .status-completed { background: #dbeafe; color: #1e40af; }
-            .status-cancelled { background: #fee2e2; color: #991b1b; }
-            
-            .priority-high { background: #fee2e2; color: #991b1b; }
-            .priority-medium { background: #fef3c7; color: #92400e; }
-            .priority-low { background: #dcfce7; color: #166534; }
-            
-            .sidebar .sidebar-content {
-                background: linear-gradient(180deg, #667eea 0%, #764ba2 100%);
-                color: white;
-            }
-            
-            .stSelectbox > div > div {
-                border-radius: 12px;
-                border: 2px solid var(--border);
-            }
-            
-            .stButton > button {
-                border-radius: 12px;
-                border: none;
-                background: linear-gradient(135deg, var(--primary), var(--secondary));
-                color: white;
-                font-weight: 600;
-                transition: all 0.2s ease;
-            }
-            
-            .stButton > button:hover {
-                transform: translateY(-1px);
-                box-shadow: 0 8px 25px rgba(102, 126, 234, 0.3);
-            }
-            
-            .data-table {
-                background: var(--bg-secondary);
-                border-radius: 16px;
-                overflow: hidden;
-                box-shadow: var(--shadow);
-                border: 1px solid var(--border);
-            }
-            
-            .chart-container {
-                background: var(--bg-secondary);
-                border-radius: 16px;
-                padding: 1.5rem;
-                box-shadow: var(--shadow);
-                border: 1px solid var(--border);
-            }
+            .metric-value {{
+                font-size: 1.5rem;
+            }}
+        }}
+        
+        /* Animation Utilities */
+        .fade-in {{
+            animation: fadeIn 0.5s ease-in;
+        }}
+        
+        @keyframes fadeIn {{
+            from {{ opacity: 0; transform: translateY(20px); }}
+            to {{ opacity: 1; transform: translateY(0); }}
+        }}
+        
+        .slide-in {{
+            animation: slideIn 0.3s ease-out;
+        }}
+        
+        @keyframes slideIn {{
+            from {{ transform: translateX(-100%); }}
+            to {{ transform: translateX(0); }}
+        }}
+        
+        /* Dark Mode Support */
+        @media (prefers-color-scheme: dark) {{
+            :root {{
+                --background: #0f172a;
+                --surface: #1e293b;
+                --text-primary: #f1f5f9;
+                --text-secondary: #94a3b8;
+                --border-color: #334155;
+            }}
+        }}
         </style>
         """,
             unsafe_allow_html=True,
         )
 
-    @staticmethod
-    def render_header(title: str, subtitle: str = ""):
-        """Render main page header"""
-        st.markdown(
-            f"""
-        <div class="main-header">
-            <h1>{title}</h1>
-            {f'<p>{subtitle}</p>' if subtitle else ''}
-        </div>
-        """,
-            unsafe_allow_html=True,
-        )
+
+class UIComponents:
+    """Modern UI component library"""
 
     @staticmethod
     def render_metric_card(
-        label: str, value: Any, delta: Optional[str] = None, icon: str = "📊"
-    ):
-        """Render metric card"""
-        delta_html = f'<div class="metric-delta">{delta}</div>' if delta else ""
+        title: str,
+        value: str,
+        delta: str = None,
+        delta_color: str = "normal",
+        icon: str = None,
+    ) -> None:
+        """Render a modern metric card"""
+        delta_html = ""
+        if delta:
+            color = (
+                "#10b981"
+                if delta_color == "normal"
+                else "#ef4444" if delta_color == "inverse" else "#64748b"
+            )
+            delta_html = f'<div style="color: {color}; font-size: 0.875rem; margin-top: 0.5rem;">{delta}</div>'
 
-        return st.markdown(
+        icon_html = (
+            f'<div style="font-size: 1.5rem; margin-bottom: 0.5rem;">{icon}</div>'
+            if icon
+            else ""
+        )
+
+        st.markdown(
             f"""
         <div class="metric-card">
-            <div style="display: flex; align-items: center; gap: 0.5rem;">
-                <span style="font-size: 1.5rem;">{icon}</span>
-                <div style="flex: 1;">
-                    <div class="metric-value">{value}</div>
-                    <div class="metric-label">{label}</div>
-                    {delta_html}
-                </div>
-            </div>
+            {icon_html}
+            <div class="metric-value">{value}</div>
+            <div class="metric-label">{title}</div>
+            {delta_html}
         </div>
         """,
             unsafe_allow_html=True,
         )
 
     @staticmethod
-    def render_status_badge(status: str) -> str:
-        """Render status badge"""
-        status_map = {
-            "Active": ("status-active", "🟢"),
-            "Pending": ("status-pending", "🟡"),
-            "Completed": ("status-completed", "🔵"),
-            "Cancelled": ("status-cancelled", "🔴"),
-            "In Progress": ("status-active", "🟢"),
-            "On Hold": ("status-pending", "🟡"),
+    def render_status_badge(status: str, size: str = "normal") -> str:
+        """Render a status badge"""
+        size_class = "status-badge-lg" if size == "large" else "status-badge"
+
+        status_classes = {
+            "Active": "status-active",
+            "In Progress": "status-active",
+            "Completed": "status-completed",
+            "Done": "status-completed",
+            "Pending": "status-pending",
+            "Planning": "status-pending",
+            "Blocked": "status-blocked",
+            "Cancelled": "status-blocked",
         }
 
-        css_class, icon = status_map.get(status, ("status-pending", "⚪"))
-        return f'<span class="status-badge {css_class}">{icon} {status}</span>'
+        status_class = status_classes.get(status, "status-pending")
+
+        return f'<span class="status-badge {status_class}">{status}</span>'
 
     @staticmethod
     def render_priority_badge(priority: str) -> str:
-        """Render priority badge"""
-        priority_map = {
-            "High": ("priority-high", "🔴"),
-            "Medium": ("priority-medium", "🟡"),
-            "Low": ("priority-low", "🟢"),
+        """Render a priority badge"""
+        priority_classes = {
+            "Critical": "priority-critical",
+            "High": "priority-high",
+            "Medium": "priority-medium",
+            "Low": "priority-low",
         }
 
-        css_class, icon = priority_map.get(priority, ("priority-low", "⚪"))
-        return f'<span class="status-badge {css_class}">{icon} {priority}</span>'
+        priority_class = priority_classes.get(priority, "priority-medium")
+
+        return f'<span class="status-badge {priority_class}">{priority}</span>'
 
     @staticmethod
-    def create_progress_chart(
-        data: List[Dict[str, Any]], title: str = "Project Progress"
-    ):
-        """Create progress chart"""
-        if not data:
-            return st.info("ไม่มีข้อมูลสำหรับแสดงผล")
+    def render_progress_bar(
+        value: float,
+        max_value: float = 100,
+        color: str = "primary",
+        height: str = "8px",
+    ) -> None:
+        """Render a custom progress bar"""
+        percentage = min((value / max_value) * 100, 100)
+        colors = ThemeManager.get_theme_colors()
 
-        df = pd.DataFrame(data)
+        color_map = {
+            "primary": colors["primary"],
+            "success": colors["success"],
+            "warning": colors["warning"],
+            "error": colors["error"],
+        }
 
-        fig = px.bar(
-            df,
-            x="name",
-            y="progress",
-            title=title,
-            color="progress",
-            color_continuous_scale=["#fee2e2", "#fef3c7", "#dcfce7"],
-            text="progress",
+        bar_color = color_map.get(color, colors["primary"])
+
+        st.markdown(
+            f"""
+        <div style="
+            width: 100%;
+            background: {colors['border']};
+            border-radius: 4px;
+            height: {height};
+            overflow: hidden;
+        ">
+            <div style="
+                width: {percentage}%;
+                background: linear-gradient(90deg, {bar_color}, {colors['secondary']});
+                height: 100%;
+                transition: width 0.3s ease;
+            "></div>
+        </div>
+        <div style="text-align: right; font-size: 0.75rem; color: {colors['text_secondary']}; margin-top: 0.25rem;">
+            {value:.1f} / {max_value}
+        </div>
+        """,
+            unsafe_allow_html=True,
         )
 
+    @staticmethod
+    def render_chart_container(
+        chart, title: str = None, description: str = None
+    ) -> None:
+        """Render a chart with professional container"""
+        container_html = '<div class="metric-card">'
+
+        if title:
+            container_html += f'<h3 style="margin: 0 0 1rem 0; color: var(--text-primary); font-weight: 600;">{title}</h3>'
+
+        if description:
+            container_html += f'<p style="margin: 0 0 1rem 0; color: var(--text-secondary); font-size: 0.875rem;">{description}</p>'
+
+        st.markdown(container_html, unsafe_allow_html=True)
+        st.plotly_chart(chart, use_container_width=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    @staticmethod
+    def create_modern_chart(
+        data: Dict, chart_type: str = "bar", title: str = None
+    ) -> go.Figure:
+        """Create a modern chart with consistent styling"""
+        colors = ThemeManager.get_theme_colors()
+
+        if chart_type == "bar":
+            fig = px.bar(
+                x=list(data.keys()),
+                y=list(data.values()),
+                title=title,
+                color_discrete_sequence=[colors["primary"]],
+            )
+        elif chart_type == "pie":
+            fig = px.pie(
+                values=list(data.values()),
+                names=list(data.keys()),
+                title=title,
+                color_discrete_sequence=px.colors.qualitative.Set3,
+            )
+        elif chart_type == "line":
+            fig = px.line(
+                x=list(data.keys()),
+                y=list(data.values()),
+                title=title,
+                color_discrete_sequence=[colors["primary"]],
+            )
+        else:
+            fig = go.Figure()
+
+        # Apply modern styling
         fig.update_layout(
             plot_bgcolor="rgba(0,0,0,0)",
             paper_bgcolor="rgba(0,0,0,0)",
-            font_family="Inter",
-            title_font_size=16,
-            title_font_color="#1e293b",
-            showlegend=False,
+            font=dict(family="Inter, sans-serif", color=colors["text_primary"]),
+            title=dict(font=dict(size=16, weight="bold")),
+            margin=dict(l=20, r=20, t=40, b=20),
+            showlegend=True if chart_type == "pie" else False,
         )
 
-        fig.update_traces(texttemplate="%{text}%", textposition="outside")
-        fig.update_xaxes(title_text="", tickangle=45)
-        fig.update_yaxes(title_text="Progress (%)", range=[0, 100])
-
-        return fig
-
-    @staticmethod
-    def create_status_pie_chart(
-        data: List[Dict[str, Any]], title: str = "Status Distribution"
-    ):
-        """Create status pie chart"""
-        if not data:
-            return st.info("ไม่มีข้อมูลสำหรับแสดงผล")
-
-        df = pd.DataFrame(data)
-
-        colors = ["#667eea", "#764ba2", "#f093fb", "#c471ed"]
-
-        fig = px.pie(
-            df,
-            values="count",
-            names="status",
-            title=title,
-            color_discrete_sequence=colors,
-        )
-
-        fig.update_layout(
-            plot_bgcolor="rgba(0,0,0,0)",
-            paper_bgcolor="rgba(0,0,0,0)",
-            font_family="Inter",
-            title_font_size=16,
-            title_font_color="#1e293b",
-        )
-
-        return fig
-
-    @staticmethod
-    def create_timeline_chart(
-        data: List[Dict[str, Any]], title: str = "Project Timeline"
-    ):
-        """Create Gantt-style timeline chart"""
-        if not data:
-            return st.info("ไม่มีข้อมูลสำหรับแสดงผล")
-
-        df = pd.DataFrame(data)
-
-        fig = px.timeline(
-            df,
-            x_start="start_date",
-            x_end="end_date",
-            y="project",
-            color="status",
-            title=title,
-            color_discrete_map={
-                "Active": "#667eea",
-                "Completed": "#10b981",
-                "Pending": "#f59e0b",
-                "Cancelled": "#ef4444",
-            },
-        )
-
-        fig.update_layout(
-            plot_bgcolor="rgba(0,0,0,0)",
-            paper_bgcolor="rgba(0,0,0,0)",
-            font_family="Inter",
-            title_font_size=16,
-            title_font_color="#1e293b",
-            xaxis_title="Timeline",
-            yaxis_title="Projects",
-        )
+        if chart_type in ["bar", "line"]:
+            fig.update_xaxes(gridcolor=colors["border"], showgrid=True, zeroline=False)
+            fig.update_yaxes(gridcolor=colors["border"], showgrid=True, zeroline=False)
 
         return fig
 
     @staticmethod
     def render_data_table(
-        data: List[Dict[str, Any]], columns: List[str], title: str = ""
-    ):
-        """Render data table with custom styling"""
+        data: List[Dict],
+        columns: List[str] = None,
+        sortable: bool = True,
+        searchable: bool = True,
+    ) -> None:
+        """Render an enhanced data table"""
         if not data:
-            return st.info("ไม่มีข้อมูลสำหรับแสดงผล")
+            st.info("ไม่มีข้อมูลที่จะแสดง")
+            return
+
+        import pandas as pd
 
         df = pd.DataFrame(data)
 
-        if title:
-            st.subheader(title)
+        if columns:
+            df = df[columns]
 
-        # Apply custom styling to dataframe
-        styled_df = df.style.set_table_styles(
-            [
-                {
-                    "selector": "thead th",
-                    "props": [
-                        ("background-color", "#667eea"),
-                        ("color", "white"),
-                        ("font-weight", "bold"),
-                        ("border", "none"),
-                    ],
-                },
-                {
-                    "selector": "tbody td",
-                    "props": [("border", "1px solid #e2e8f0"), ("padding", "0.75rem")],
-                },
-                {
-                    "selector": "table",
-                    "props": [
-                        ("border-collapse", "collapse"),
-                        ("border-radius", "8px"),
-                        ("overflow", "hidden"),
-                    ],
-                },
-            ]
-        )
+        # Add search functionality
+        if searchable and len(df) > 10:
+            search_term = st.text_input("🔍 ค้นหา", placeholder="พิมพ์เพื่อค้นหา...")
+            if search_term:
+                df = df[
+                    df.astype(str)
+                    .apply(lambda x: x.str.contains(search_term, case=False, na=False))
+                    .any(axis=1)
+                ]
 
-        return st.dataframe(styled_df, use_container_width=True)
+        # Display table
+        st.markdown('<div class="data-table-container">', unsafe_allow_html=True)
+        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.markdown("</div>", unsafe_allow_html=True)
 
     @staticmethod
-    def render_notification(message: str, type: str = "info", icon: str = ""):
-        """Render notification with custom styling"""
-        type_styles = {
-            "success": ("#dcfce7", "#166534", "✅"),
-            "warning": ("#fef3c7", "#92400e", "⚠️"),
-            "error": ("#fee2e2", "#991b1b", "❌"),
-            "info": ("#dbeafe", "#1e40af", "ℹ️"),
-        }
+    def render_timeline(events: List[Dict]) -> None:
+        """Render a timeline component"""
+        if not events:
+            st.info("ไม่มีเหตุการณ์ที่จะแสดง")
+            return
 
-        bg_color, text_color, default_icon = type_styles.get(type, type_styles["info"])
-        display_icon = icon or default_icon
+        timeline_html = '<div class="timeline">'
 
+        for i, event in enumerate(events):
+            timestamp = event.get("timestamp", "")
+            title = event.get("title", "")
+            description = event.get("description", "")
+            type_color = event.get("type_color", "#6366f1")
+
+            timeline_html += f"""
+            <div class="timeline-item">
+                <div class="timeline-marker" style="background: {type_color};"></div>
+                <div class="timeline-content">
+                    <div class="timeline-time">{timestamp}</div>
+                    <div class="timeline-title">{title}</div>
+                    <div class="timeline-description">{description}</div>
+                </div>
+            </div>
+            """
+
+        timeline_html += "</div>"
+
+        # Add timeline CSS
         st.markdown(
-            f"""
-        <div style="
-            background: {bg_color};
-            color: {text_color};
-            padding: 1rem 1.5rem;
-            border-radius: 12px;
-            border-left: 4px solid {text_color};
-            margin: 1rem 0;
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-            font-weight: 500;
-        ">
-            <span style="font-size: 1.25rem;">{display_icon}</span>
-            <span>{message}</span>
-        </div>
-        """,
-            unsafe_allow_html=True,
-        )
-
-    @staticmethod
-    def render_loading_spinner(text: str = "กำลังโหลด..."):
-        """Render loading spinner"""
-        return st.markdown(
-            f"""
-        <div style="
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 1rem;
-            padding: 2rem;
-            color: #64748b;
-        ">
-            <div style="
-                width: 20px;
-                height: 20px;
-                border: 2px solid #e2e8f0;
-                border-top: 2px solid #667eea;
-                border-radius: 50%;
-                animation: spin 1s linear infinite;
-            "></div>
-            <span>{text}</span>
-        </div>
+            """
         <style>
-            @keyframes spin {{
-                0% {{ transform: rotate(0deg); }}
-                100% {{ transform: rotate(360deg); }}
-            }}
+        .timeline {
+            position: relative;
+            padding-left: 2rem;
+        }
+        
+        .timeline::before {
+            content: '';
+            position: absolute;
+            left: 0.75rem;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background: var(--border-color);
+        }
+        
+        .timeline-item {
+            position: relative;
+            margin-bottom: 2rem;
+        }
+        
+        .timeline-marker {
+            position: absolute;
+            left: -2rem;
+            top: 0.5rem;
+            width: 1rem;
+            height: 1rem;
+            border-radius: 50%;
+            border: 3px solid white;
+            box-shadow: 0 0 0 2px var(--border-color);
+        }
+        
+        .timeline-content {
+            background: var(--background);
+            padding: 1rem;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        
+        .timeline-time {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin-bottom: 0.5rem;
+        }
+        
+        .timeline-title {
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 0.25rem;
+        }
+        
+        .timeline-description {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+        }
         </style>
         """,
             unsafe_allow_html=True,
         )
 
+        st.markdown(timeline_html, unsafe_allow_html=True)
+
     @staticmethod
-    def render_empty_state(title: str, message: str, icon: str = "📋"):
-        """Render empty state"""
-        return st.markdown(
+    def render_notification_toast(
+        message: str, type: str = "info", duration: int = 3000
+    ) -> None:
+        """Render a notification toast"""
+        type_colors = {
+            "success": "#10b981",
+            "warning": "#f59e0b",
+            "error": "#ef4444",
+            "info": "#3b82f6",
+        }
+
+        color = type_colors.get(type, type_colors["info"])
+
+        st.markdown(
             f"""
-        <div style="
-            text-align: center;
-            padding: 4rem 2rem;
-            color: #64748b;
-        ">
-            <div style="font-size: 4rem; margin-bottom: 1rem;">{icon}</div>
-            <h3 style="color: #1e293b; margin-bottom: 0.5rem;">{title}</h3>
-            <p style="font-size: 1.125rem;">{message}</p>
-        </div>
-        """,
-            unsafe_allow_html=True,
-        )
-
-    @staticmethod
-    def create_sidebar_navigation():
-        """Create sidebar navigation"""
-        st.sidebar.markdown(
-            """
-        <div style="
-            background: linear-gradient(135deg, #667eea, #764ba2);
-            margin: -1rem -1rem 2rem;
-            padding: 2rem 1rem;
-            text-align: center;
+        <div class="notification-toast" style="
+            position: fixed;
+            top: 1rem;
+            right: 1rem;
+            background: {color};
             color: white;
+            padding: 1rem 1.5rem;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+            z-index: 1000;
+            animation: slideInRight 0.3s ease-out;
         ">
-            <h2 style="margin: 0; font-size: 1.5rem;">SDX</h2>
-            <p style="margin: 0.5rem 0 0; opacity: 0.9;">Project Manager</p>
+            {message}
         </div>
+        
+        <style>
+        @keyframes slideInRight {{
+            from {{ transform: translateX(100%); }}
+            to {{ transform: translateX(0); }}
+        }}
+        </style>
+        
+        <script>
+        setTimeout(function() {{
+            document.querySelector('.notification-toast').style.display = 'none';
+        }}, {duration});
+        </script>
         """,
             unsafe_allow_html=True,
         )
 
-        return st.sidebar.selectbox(
-            "เลือกหน้า",
-            ["🏠 หน้าหลัก", "📊 โครงการ", "✅ งาน", "👥 ผู้ใช้", "📈 รายงาน", "⚙️ ตั้งค่า"],
-            label_visibility="collapsed",
-        )
-
     @staticmethod
-    def render_footer():
-        """Render footer"""
-        st.markdown("---")
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-            st.caption("**SDX | Project Manager v2.0**")
-        with col2:
-            st.caption(f"🕐 อัปเดต: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
-        with col3:
-            st.caption("**Thammaphon Chittasuwanna (SDM) | Innovation**")
+    def render_loading_spinner(message: str = "กำลังโหลด...") -> None:
+        """Render a loading spinner"""
+        st.markdown(
+            f"""
+        <div class="loading-spinner">
+            <div style="
+                border: 4px solid var(--border-color);
+                border-top: 4px solid var(--primary-color);
+                border-radius: 50%;
+                width: 40px;
+                height: 40px;
+                animation: spin 1s linear infinite;
+                margin-right: 1rem;
+            "></div>
+            <span style="color: var(--text-secondary);">{message}</span>
+        </div>
+        
+        <style>
+        @keyframes spin {{
+            0% {{ transform: rotate(0deg); }}
+            100% {{ transform: rotate(360deg); }}
+        }}
+        </style>
+        """,
+            unsafe_allow_html=True,
+        )

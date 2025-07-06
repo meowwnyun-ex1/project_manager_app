@@ -1,0 +1,459 @@
+# SDX Project Manager - Production Docker Compose Configuration
+# Enterprise-grade deployment with high availability and security
+
+version: '3.8'
+
+services:
+  # Main Application
+  sdx-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - BUILD_ENV=production
+    container_name: sdx-project-manager
+    restart: unless-stopped
+    ports:
+      - '8501:8501'
+    environment:
+      - STREAMLIT_SERVER_PORT=8501
+      - STREAMLIT_SERVER_ADDRESS=0.0.0.0
+      - STREAMLIT_SERVER_HEADLESS=true
+      - STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+      - DATABASE_URL=mssql+pyodbc://sa:${SQL_PASSWORD}@sql-server:1433/SDXProjectManager?driver=ODBC+Driver+17+for+SQL+Server
+      - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=${SECRET_KEY}
+      - JWT_SECRET=${JWT_SECRET}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - ENVIRONMENT=production
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./static:/app/static
+      - ./uploads:/app/uploads
+      - ./backups:/app/backups
+    depends_on:
+      - sql-server
+      - redis
+      - nginx
+    networks:
+      - sdx-network
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:8501/_stcore/health']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    labels:
+      - 'traefik.enable=true'
+      - 'traefik.http.routers.sdx-app.rule=Host(`sdx.denso.com`)'
+      - 'traefik.http.routers.sdx-app.tls=true'
+      - 'traefik.http.routers.sdx-app.tls.certresolver=letsencrypt'
+
+  # SQL Server Database
+  sql-server:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: sdx-sql-server
+    restart: unless-stopped
+    environment:
+      - ACCEPT_EULA=Y
+      - SA_PASSWORD=${SQL_PASSWORD}
+      - MSSQL_PID=Express
+      - MSSQL_TCP_PORT=1433
+      - MSSQL_AGENT_ENABLED=true
+    ports:
+      - '1433:1433'
+    volumes:
+      - sql-data:/var/opt/mssql
+      - ./sql/setup.sql:/docker-entrypoint-initdb.d/setup.sql:ro
+      - ./backups/sql:/var/backups
+    networks:
+      - sdx-network
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          "/opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P ${SQL_PASSWORD} -Q 'SELECT 1'",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # Redis Cache & Session Store
+  redis:
+    image: redis:7.2-alpine
+    container_name: sdx-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis-data:/data
+      - ./config/redis.conf:/etc/redis/redis.conf:ro
+    networks:
+      - sdx-network
+    healthcheck:
+      test: ['CMD', 'redis-cli', '--raw', 'incr', 'ping']
+      interval: 30s
+      timeout: 3s
+      retries: 5
+
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: sdx-nginx
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./config/nginx/ssl:/etc/nginx/ssl:ro
+      - ./static:/var/www/static:ro
+      - ./logs/nginx:/var/log/nginx
+      - nginx-cache:/var/cache/nginx
+    depends_on:
+      - sdx-app
+    networks:
+      - sdx-network
+    healthcheck:
+      test: ['CMD', 'wget', '--quiet', '--tries=1', '--spider', 'http://localhost/health']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Celery Worker for Background Tasks
+  celery-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.celery
+    container_name: sdx-celery-worker
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=mssql+pyodbc://sa:${SQL_PASSWORD}@sql-server:1433/SDXProjectManager?driver=ODBC+Driver+17+for+SQL+Server
+      - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=${SECRET_KEY}
+      - ENVIRONMENT=production
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./uploads:/app/uploads
+    depends_on:
+      - sql-server
+      - redis
+    networks:
+      - sdx-network
+    command: celery -A app.celery worker --loglevel=info --concurrency=4
+
+  # Celery Beat Scheduler
+  celery-beat:
+    build:
+      context: .
+      dockerfile: Dockerfile.celery
+    container_name: sdx-celery-beat
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=mssql+pyodbc://sa:${SQL_PASSWORD}@sql-server:1433/SDXProjectManager?driver=ODBC+Driver+17+for+SQL+Server
+      - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=${SECRET_KEY}
+      - ENVIRONMENT=production
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    depends_on:
+      - sql-server
+      - redis
+    networks:
+      - sdx-network
+    command: celery -A app.celery beat --loglevel=info
+
+  # Flower - Celery Monitoring
+  flower:
+    build:
+      context: .
+      dockerfile: Dockerfile.celery
+    container_name: sdx-flower
+    restart: unless-stopped
+    ports:
+      - '5555:5555'
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - FLOWER_BASIC_AUTH=${FLOWER_USER}:${FLOWER_PASSWORD}
+    depends_on:
+      - redis
+      - celery-worker
+    networks:
+      - sdx-network
+    command: celery -A app.celery flower --port=5555
+
+  # Prometheus Monitoring
+  prometheus:
+    image: prom/prometheus:v2.45.0
+    container_name: sdx-prometheus
+    restart: unless-stopped
+    ports:
+      - '9090:9090'
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - sdx-network
+
+  # Grafana Dashboard
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: sdx-grafana
+    restart: unless-stopped
+    ports:
+      - '3000:3000'
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_DOMAIN=grafana.denso.com
+      - GF_SMTP_ENABLED=true
+      - GF_SMTP_HOST=${SMTP_HOST}:${SMTP_PORT}
+      - GF_SMTP_USER=${SMTP_USER}
+      - GF_SMTP_PASSWORD=${SMTP_PASSWORD}
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./config/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+    networks:
+      - sdx-network
+
+  # File Storage (MinIO)
+  minio:
+    image: minio/minio:RELEASE.2024-01-11T07-46-16Z
+    container_name: sdx-minio
+    restart: unless-stopped
+    ports:
+      - '9000:9000'
+      - '9001:9001'
+    environment:
+      - MINIO_ROOT_USER=${MINIO_USER}
+      - MINIO_ROOT_PASSWORD=${MINIO_PASSWORD}
+      - MINIO_BROWSER_REDIRECT_URL=https://minio.denso.com
+    volumes:
+      - minio-data:/data
+    command: server /data --console-address ":9001"
+    networks:
+      - sdx-network
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:9000/minio/health/live']
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # Elasticsearch for Logging
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: sdx-elasticsearch
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - 'ES_JAVA_OPTS=-Xms1g -Xmx1g'
+    ports:
+      - '9200:9200'
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    networks:
+      - sdx-network
+    healthcheck:
+      test: ['CMD-SHELL', 'curl --silent --fail localhost:9200/_cluster/health || exit 1']
+      interval: 30s
+      timeout: 30s
+      retries: 3
+
+  # Kibana for Log Visualization
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.11.0
+    container_name: sdx-kibana
+    restart: unless-stopped
+    ports:
+      - '5601:5601'
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - ELASTICSEARCH_USERNAME=kibana_system
+      - ELASTICSEARCH_PASSWORD=${KIBANA_PASSWORD}
+    depends_on:
+      - elasticsearch
+    networks:
+      - sdx-network
+    healthcheck:
+      test: ['CMD-SHELL', "curl -s -I http://localhost:5601 | grep -q 'HTTP/1.1 302 Found'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Traefik Load Balancer
+  traefik:
+    image: traefik:v3.0
+    container_name: sdx-traefik
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+      - '8080:8080'
+    environment:
+      - TRAEFIK_API_DASHBOARD=true
+      - TRAEFIK_API_INSECURE=false
+      - TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT_ACME_EMAIL=${ACME_EMAIL}
+      - TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT_ACME_STORAGE=/acme/acme.json
+      - TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT_ACME_HTTPCHALLENGE=true
+      - TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT_ACME_HTTPCHALLENGE_ENTRYPOINT=web
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-acme:/acme
+      - ./config/traefik.yml:/etc/traefik/traefik.yml:ro
+    networks:
+      - sdx-network
+    labels:
+      - 'traefik.enable=true'
+      - 'traefik.http.routers.dashboard.rule=Host(`traefik.denso.com`)'
+      - 'traefik.http.routers.dashboard.tls=true'
+      - 'traefik.http.routers.dashboard.tls.certresolver=letsencrypt'
+
+  # Backup Service
+  backup:
+    image: alpine:3.18
+    container_name: sdx-backup
+    restart: unless-stopped
+    environment:
+      - BACKUP_SCHEDULE=${BACKUP_SCHEDULE:-0 2 * * *}
+      - BACKUP_RETENTION_DAYS=${BACKUP_RETENTION_DAYS:-30}
+      - DATABASE_URL=mssql+pyodbc://sa:${SQL_PASSWORD}@sql-server:1433/SDXProjectManager?driver=ODBC+Driver+17+for+SQL+Server
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_S3_BUCKET=${AWS_S3_BUCKET}
+    volumes:
+      - ./backups:/backups
+      - ./scripts/backup.sh:/usr/local/bin/backup.sh:ro
+      - sql-data:/var/opt/mssql:ro
+    depends_on:
+      - sql-server
+    networks:
+      - sdx-network
+    command: |
+      sh -c "
+        apk add --no-cache dcron tzdata aws-cli postgresql-client curl &&
+        echo '${BACKUP_SCHEDULE} /usr/local/bin/backup.sh' | crontab - &&
+        crond -f -l 2
+      "
+
+  # Health Check Service
+  healthcheck:
+    image: curlimages/curl:8.5.0
+    container_name: sdx-healthcheck
+    restart: unless-stopped
+    environment:
+      - CHECK_INTERVAL=60
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL}
+      - TEAMS_WEBHOOK_URL=${TEAMS_WEBHOOK_URL}
+    volumes:
+      - ./scripts/healthcheck.sh:/usr/local/bin/healthcheck.sh:ro
+    depends_on:
+      - sdx-app
+      - sql-server
+      - redis
+    networks:
+      - sdx-network
+    command: |
+      sh -c "
+        while true; do
+          /usr/local/bin/healthcheck.sh
+          sleep ${CHECK_INTERVAL}
+        done
+      "
+
+# Networks
+networks:
+  sdx-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# Volumes
+volumes:
+  sql-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_PATH}/sql
+
+  redis-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_PATH}/redis
+
+  nginx-cache:
+    driver: local
+
+  prometheus-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_PATH}/prometheus
+
+  grafana-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_PATH}/grafana
+
+  minio-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_PATH}/minio
+
+  elasticsearch-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_PATH}/elasticsearch
+
+  traefik-acme:
+    driver: local
+# Production deployment commands:
+# 1. cp .env.example .env && edit .env
+# 2. mkdir -p ${DATA_PATH}/{sql,redis,prometheus,grafana,minio,elasticsearch}
+# 3. docker-compose -f docker-compose.yml up -d
+# 4. docker-compose logs -f sdx-app
+
+# Scaling commands:
+# docker-compose up -d --scale sdx-app=3
+# docker-compose up -d --scale celery-worker=5
+
+# Backup & Recovery:
+# docker-compose exec backup /usr/local/bin/backup.sh
+# docker-compose exec sql-server /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P password -Q "RESTORE DATABASE..."
+
+# Monitoring URLs:
+# Application: https://sdx.denso.com
+# Grafana: https://grafana.denso.com:3000
+# Prometheus: http://prometheus.denso.com:9090
+# Flower: http://flower.denso.com:5555
+# Kibana: http://kibana.denso.com:5601
+# MinIO: https://minio.denso.com:9001
+# Traefik: https://traefik.denso.com:8080
