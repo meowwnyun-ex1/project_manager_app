@@ -605,7 +605,7 @@ class FileManager:
             type_stats = self.db.execute_query(stats_query)
 
             # Overall stats
-            overall_query = """
+            overall_query = """"""
                 SELECT 
                     COUNT(*) as total_files,
                     SUM(FileSize) as total_size,
