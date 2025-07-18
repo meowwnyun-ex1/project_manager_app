@@ -1,284 +1,239 @@
 #!/usr/bin/env python3
 """
 app.py
-SDX Project Manager - Enterprise-Grade Application
-Professional UI/UX with real database integration and production-ready features
+SDX Project Manager - Enterprise Application
+โครงการหลักของระบบจัดการโครงการขององค์กร
 """
 
 import streamlit as st
 import logging
 import sys
 import os
-import traceback
+import time
 from pathlib import Path
 from datetime import datetime
-import time
+from typing import Dict, Any, Optional
 
-# Performance monitoring
-start_time = time.time()
+# Performance tracking
+APP_START_TIME = time.time()
 
-# Add modules to path
-current_dir = Path(__file__).parent
-modules_dir = current_dir / "modules"
-config_dir = current_dir / "config"
-utils_dir = current_dir / "utils"
+# ตั้งค่า path สำหรับ modules
+CURRENT_DIR = Path(__file__).parent
+MODULES_DIR = CURRENT_DIR / "modules"
+CONFIG_DIR = CURRENT_DIR / "config"
+UTILS_DIR = CURRENT_DIR / "utils"
 
-for path in [modules_dir, config_dir, utils_dir]:
-    if str(path) not in sys.path:
-        sys.path.insert(0, str(path))
+# เพิ่ม paths เข้า sys.path
+for directory in [MODULES_DIR, CONFIG_DIR, UTILS_DIR]:
+    if directory.exists() and str(directory) not in sys.path:
+        sys.path.insert(0, str(directory))
 
-# Ensure log directory exists
-log_dir = current_dir / "logs"
-log_dir.mkdir(exist_ok=True)
+# สร้าง directories ที่จำเป็น
+required_dirs = ["logs", "data", "data/uploads", "data/cache", "data/temp"]
+for dir_name in required_dirs:
+    (CURRENT_DIR / dir_name).mkdir(parents=True, exist_ok=True)
 
-# Configure advanced logging
+# ตั้งค่า logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     handlers=[
-        logging.FileHandler(log_dir / "app.log", encoding="utf-8"),
+        logging.FileHandler(CURRENT_DIR / "logs" / "app.log", encoding="utf-8"),
         logging.StreamHandler(sys.stdout),
     ],
 )
 logger = logging.getLogger(__name__)
 
-# Streamlit page configuration - Production optimized
+# Streamlit page config
 st.set_page_config(
     page_title="SDX Project Manager | DENSO Innovation",
     page_icon="🚀",
     layout="wide",
     initial_sidebar_state="expanded",
     menu_items={
-        "Get Help": "https://denso-innovation.com/sdx-help",
+        "Get Help": "https://denso-innovation.com/help",
         "Report a bug": "mailto:innovation@denso.com",
-        "About": """
-        # SDX Project Manager v2.5 Enterprise
-        
-        🏢 **DENSO Innovation Team**  
-        📧 innovation@denso.com  
-        🌐 denso-innovation.com
-        
-        **Features:**
-        - Enterprise Authentication
-        - Real-time Project Tracking
-        - Advanced Analytics
-        - Multi-language Support
-        - Production Database
-        """,
+        "About": "SDX Project Manager v2.5 | DENSO Innovation Team",
     },
 )
 
-# Import modules with error handling
-try:
-    from database import DatabaseManager
-    from auth import AuthenticationManager, UserRole
-    from projects import ProjectManager
-    from tasks import TaskManager
-    from analytics import AnalyticsManager
-    from settings import SettingsManager
-    from ui_components import UIComponents, ThemeManager
-    from error_handler import ErrorHandler
-    from performance_monitor import PerformanceMonitor
-except ImportError as e:
-    st.error(f"❌ **Module Import Error**")
-    st.code(f"Error: {str(e)}")
-    st.info("💡 **Quick Fix:** Run `python setup_environment.py` first")
-    st.stop()
 
-# Initialize error handler
-error_handler = ErrorHandler()
-
-
-# Load enhanced CSS and themes
-def load_professional_css():
-    """Load enterprise-grade CSS styling"""
+# Import modules ด้วย error handling
+def import_modules():
+    """Import จำเป็นโมดูลด้วย error handling"""
     try:
-        css_file = current_dir / "static" / "css" / "enterprise.css"
-        if css_file.exists():
-            with open(css_file, "r", encoding="utf-8") as f:
-                custom_css = f.read()
-        else:
-            custom_css = ""
-
-        st.markdown(
-            f"""
-        <style>
-        /* Enterprise Theme */
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
-        
-        :root {{
-            --primary-color: #6366f1;
-            --primary-dark: #4f46e5;
-            --secondary-color: #8b5cf6;
-            --success-color: #10b981;
-            --warning-color: #f59e0b;
-            --error-color: #ef4444;
-            --background-primary: #ffffff;
-            --background-secondary: #f8fafc;
-            --text-primary: #1e293b;
-            --text-secondary: #64748b;
-            --border-color: #e2e8f0;
-            --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
-            --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1);
-            --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1);
-        }}
-        
-        /* Global Styles */
-        html, body, [class*="css"] {{
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-            font-feature-settings: 'cv11', 'ss01';
-            font-variation-settings: 'opsz' 32;
-        }}
-        
-        /* Hide Streamlit Default Elements */
-        #MainMenu {{visibility: hidden;}}
-        footer {{visibility: hidden;}}
-        header {{visibility: hidden;}}
-        .stDeployButton {{display: none;}}
-        
-        /* Enhanced Sidebar */
-        .css-1d391kg {{
-            background: linear-gradient(180deg, 
-                var(--primary-color) 0%, 
-                var(--primary-dark) 100%);
-            border-right: 1px solid var(--border-color);
-        }}
-        
-        .css-1d391kg .css-17eq0hr {{
-            color: white;
-            font-weight: 600;
-        }}
-        
-        /* Main Content Area */
-        .main {{
-            background: var(--background-secondary);
-            padding: 2rem;
-        }}
-        
-        /* Card Components */
-        .metric-card {{
-            background: var(--background-primary);
-            border: 1px solid var(--border-color);
-            border-radius: 12px;
-            padding: 1.5rem;
-            box-shadow: var(--shadow-md);
-            transition: all 0.3s ease;
-        }}
-        
-        .metric-card:hover {{
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-lg);
-        }}
-        
-        /* Professional Buttons */
-        .stButton > button {{
-            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
-            color: white;
-            border: none;
-            border-radius: 8px;
-            padding: 0.5rem 1.5rem;
-            font-weight: 600;
-            font-size: 0.9rem;
-            transition: all 0.3s ease;
-            box-shadow: var(--shadow-sm);
-        }}
-        
-        .stButton > button:hover {{
-            transform: translateY(-1px);
-            box-shadow: var(--shadow-md);
-        }}
-        
-        /* Status Badges */
-        .status-badge {{
-            display: inline-block;
-            padding: 0.25rem 0.75rem;
-            border-radius: 9999px;
-            font-size: 0.75rem;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-        }}
-        
-        .status-active {{
-            background: #dcfce7;
-            color: #166534;
-        }}
-        
-        .status-pending {{
-            background: #fef3c7;
-            color: #92400e;
-        }}
-        
-        .status-completed {{
-            background: #dbeafe;
-            color: #1e40af;
-        }}
-        
-        /* Data Tables */
-        .stDataFrame {{
-            border: 1px solid var(--border-color);
-            border-radius: 8px;
-            overflow: hidden;
-        }}
-        
-        /* Loading States */
-        .loading-spinner {{
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            padding: 2rem;
-        }}
-        
-        /* Responsive Design */
-        @media (max-width: 768px) {{
-            .main {{
-                padding: 1rem;
-            }}
-            
-            .metric-card {{
-                padding: 1rem;
-            }}
-        }}
-        
-        /* Dark Mode Support */
-        @media (prefers-color-scheme: dark) {{
-            :root {{
-                --background-primary: #1e293b;
-                --background-secondary: #0f172a;
-                --text-primary: #f1f5f9;
-                --text-secondary: #94a3b8;
-                --border-color: #334155;
-            }}
-        }}
-        
-        {custom_css}
-        </style>
-        """,
-            unsafe_allow_html=True,
+        # Core modules
+        from database import DatabaseManager
+        from auth import (
+            AuthenticationManager,
+            init_session_state,
+            get_current_user,
+            is_admin,
         )
 
-    except Exception as e:
-        logger.error(f"CSS loading error: {e}")
-        st.error("⚠️ Styling partially loaded")
+        # UI modules
+        from ui_components import ThemeManager
+        from error_handler import global_error_handler
+
+        return {
+            "DatabaseManager": DatabaseManager,
+            "AuthenticationManager": AuthenticationManager,
+            "ThemeManager": ThemeManager,
+            "init_session_state": init_session_state,
+            "get_current_user": get_current_user,
+            "is_admin": is_admin,
+            "error_handler": global_error_handler,
+        }
+
+    except ImportError as e:
+        st.error(f"❌ **Import Error**: {str(e)}")
+        st.code(
+            """
+        แก้ไขปัญหา:
+        1. pip install -r requirements.txt
+        2. ตรวจสอบไฟล์ modules ทั้งหมดมีอยู่
+        3. ตรวจสอบ database connection
+        """
+        )
+        st.stop()
 
 
-# Initialize session state
-def initialize_session_state():
-    """Initialize session state with enterprise defaults"""
+# โหลด CSS และ styling
+def load_enterprise_css():
+    """โหลด enterprise CSS styling"""
+    st.markdown(
+        """
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&display=swap');
+    
+    /* Global Variables */
+    :root {
+        --primary: #6366f1;
+        --primary-dark: #4f46e5;
+        --success: #10b981;
+        --warning: #f59e0b;
+        --error: #ef4444;
+        --surface: #ffffff;
+        --background: #f8fafc;
+        --text: #1e293b;
+        --text-muted: #64748b;
+        --border: #e2e8f0;
+    }
+    
+    /* Typography */
+    .stApp {
+        font-family: 'Noto Sans Thai', system-ui, sans-serif;
+    }
+    
+    /* Hide Streamlit elements */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    .stDeployButton {display: none;}
+    
+    /* Header styling */
+    .app-header {
+        background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+        padding: 1.5rem 2rem;
+        margin: -1rem -1rem 2rem -1rem;
+        border-radius: 0 0 1rem 1rem;
+        color: white;
+        box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+    }
+    
+    /* Cards */
+    .metric-card {
+        background: var(--surface);
+        padding: 1.5rem;
+        border-radius: 0.75rem;
+        border: 1px solid var(--border);
+        box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1);
+        transition: all 0.2s ease;
+    }
+    
+    .metric-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1);
+    }
+    
+    /* Status badges */
+    .status-badge {
+        padding: 0.25rem 0.75rem;
+        border-radius: 9999px;
+        font-size: 0.75rem;
+        font-weight: 500;
+        text-transform: uppercase;
+    }
+    
+    .status-active { background: var(--success); color: white; }
+    .status-pending { background: var(--warning); color: white; }
+    .status-completed { background: var(--primary); color: white; }
+    
+    /* Buttons */
+    .stButton > button {
+        border-radius: 0.5rem;
+        font-weight: 500;
+        transition: all 0.2s ease;
+        border: none;
+    }
+    
+    .stButton > button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+    }
+    
+    /* Sidebar */
+    .css-1d391kg {
+        background: linear-gradient(180deg, var(--primary) 0%, var(--primary-dark) 100%);
+    }
+    
+    /* Forms */
+    .stTextInput > div > div > input,
+    .stSelectbox > div > div > select {
+        border-radius: 0.5rem;
+        border: 1px solid var(--border);
+    }
+    
+    /* Loading */
+    .loading-spinner {
+        display: inline-block;
+        width: 20px;
+        height: 20px;
+        border: 3px solid #f3f3f3;
+        border-top: 3px solid var(--primary);
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+    }
+    
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+    
+    /* Mobile responsive */
+    @media (max-width: 768px) {
+        .app-header {
+            padding: 1rem;
+            margin: -1rem -1rem 1rem -1rem;
+        }
+    }
+    </style>
+    """,
+        unsafe_allow_html=True,
+    )
+
+
+# Session state management
+def initialize_session():
+    """เริ่มต้น session state"""
     defaults = {
         "authenticated": False,
-        "user_id": None,
-        "username": None,
-        "user_role": None,
-        "user_department": None,
+        "user": None,
         "current_page": "dashboard",
-        "theme": "professional",
+        "managers": None,
+        "login_time": None,
+        "theme": "light",
         "language": "th",
-        "last_activity": datetime.now(),
-        "session_timeout": 3600,  # 1 hour
-        "notifications": [],
-        "performance_data": {},
-        "error_count": 0,
     }
 
     for key, value in defaults.items():
@@ -286,357 +241,388 @@ def initialize_session_state():
             st.session_state[key] = value
 
 
-# Session timeout check
-def check_session_timeout():
-    """Check and handle session timeout"""
-    if st.session_state.authenticated:
-        time_elapsed = (datetime.now() - st.session_state.last_activity).seconds
-        if time_elapsed > st.session_state.session_timeout:
-            st.session_state.authenticated = False
-            st.session_state.user_id = None
-            st.warning("🔒 Session expired. Please login again.")
-            st.rerun()
-        else:
-            st.session_state.last_activity = datetime.now()
+# Manager instances
+@st.cache_resource
+def get_managers():
+    """สร้าง manager instances"""
+    try:
+        modules = import_modules()
+
+        db_manager = modules["DatabaseManager"]()
+        auth_manager = modules["AuthenticationManager"](db_manager)
+
+        return {
+            "db": db_manager,
+            "auth": auth_manager,
+            "error_handler": modules["error_handler"],
+        }
+    except Exception as e:
+        logger.error(f"Failed to initialize managers: {e}")
+        raise
 
 
-# Enhanced authentication UI
-def render_login_page():
-    """Render enterprise-grade login page"""
-    col1, col2, col3 = st.columns([1, 2, 1])
-
-    with col2:
-        st.markdown(
-            """
-        <div style="text-align: center; padding: 2rem 0;">
-            <h1 style="color: var(--primary-color); font-weight: 800; font-size: 2.5rem;">
-                🚀 SDX Project Manager
-            </h1>
-            <p style="color: var(--text-secondary); font-size: 1.1rem; margin-bottom: 2rem;">
-                DENSO Innovation Team | Enterprise Edition
-            </p>
+# App header
+def render_header():
+    """แสดง header ของแอป"""
+    st.markdown(
+        f"""
+    <div class="app-header">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+                <h1 style="margin: 0; font-size: 2rem; font-weight: 700;">
+                    🚀 SDX Project Manager
+                </h1>
+                <p style="margin: 0.5rem 0 0 0; opacity: 0.9;">
+                    ระบบจัดการโครงการองค์กร | DENSO Innovation
+                </p>
+            </div>
+            <div style="text-align: right;">
+                <div style="opacity: 0.8;">📅 {datetime.now().strftime('%d/%m/%Y')}</div>
+                <div style="opacity: 0.7; font-size: 0.9rem;">⏰ {datetime.now().strftime('%H:%M')}</div>
+            </div>
         </div>
-        """,
-            unsafe_allow_html=True,
+    </div>
+    """,
+        unsafe_allow_html=True,
+    )
+
+
+# Login page
+def render_login():
+    """หน้าเข้าสู่ระบบ"""
+    st.markdown(
+        """
+    <div style="max-width: 400px; margin: 2rem auto; padding: 2rem; 
+         background: white; border-radius: 1rem; box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1);">
+        <div style="text-align: center; margin-bottom: 2rem;">
+            <h2 style="color: #1e293b; margin-bottom: 0.5rem;">🔐 เข้าสู่ระบบ</h2>
+            <p style="color: #64748b;">SDX Project Manager</p>
+        </div>
+    """,
+        unsafe_allow_html=True,
+    )
+
+    with st.form("login_form"):
+        username = st.text_input("👤 ชื่อผู้ใช้", placeholder="กรอกชื่อผู้ใช้")
+        password = st.text_input("🔑 รหัสผ่าน", type="password", placeholder="กรอกรหัสผ่าน")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            remember = st.checkbox("จดจำการเข้าสู่ระบบ")
+        with col2:
+            forgot = st.button("ลืมรหัสผ่าน?", type="secondary")
+
+        login_btn = st.form_submit_button(
+            "🚀 เข้าสู่ระบบ", type="primary", use_container_width=True
         )
 
-        # Login form
-        with st.container():
-            st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+        if login_btn:
+            if not username or not password:
+                st.error("❌ กรุณากรอกชื่อผู้ใช้และรหัสผ่าน")
+                return
 
-            with st.form("login_form", clear_on_submit=False):
-                st.markdown("### 🔐 เข้าสู่ระบบ")
+            with st.spinner("🔄 กำลังตรวจสอบ..."):
+                managers = st.session_state.get("managers")
+                if not managers:
+                    st.error("❌ ระบบยังไม่พร้อม กรุณาลองใหม่")
+                    return
 
-                username = st.text_input(
-                    "👤 ชื่อผู้ใช้งาน",
-                    placeholder="กรอกชื่อผู้ใช้งาน",
-                    help="ใช้ username ที่ได้รับจากทีม IT",
+                user = managers["auth"].authenticate_user(
+                    username=username,
+                    password=password,
+                    ip_address="127.0.0.1",
+                    user_agent="",
                 )
 
-                password = st.text_input(
-                    "🔑 รหัสผ่าน",
-                    type="password",
-                    placeholder="กรอกรหัสผ่าน",
-                    help="รหัสผ่านต้องมีอย่างน้อย 8 ตัวอักษร",
-                )
-
-                col_login, col_forgot = st.columns([1, 1])
-                with col_login:
-                    submit_button = st.form_submit_button(
-                        "🚀 เข้าสู่ระบบ", use_container_width=True
+                if user:
+                    st.session_state.authenticated = True
+                    st.session_state.user = user
+                    st.session_state.login_time = datetime.now()
+                    st.success(
+                        f"✅ ยินดีต้อนรับ {user.get('FirstName', '')} {user.get('LastName', '')}!"
                     )
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error("❌ ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง")
 
-                with col_forgot:
-                    if st.form_submit_button("🔄 ลืมรหัสผ่าน"):
-                        st.info("📧 กรุณาติดต่อทีม IT: innovation@denso.com")
+    st.markdown("</div>", unsafe_allow_html=True)
 
-                if submit_button and username and password:
-                    try:
-                        # Initialize auth manager
-                        auth_manager = AuthenticationManager(db_manager)
-
-                        # Attempt login
-                        user = auth_manager.login(username, password)
-
-                        if user:
-                            st.session_state.authenticated = True
-                            st.session_state.user_id = user["UserID"]
-                            st.session_state.username = user["Username"]
-                            st.session_state.user_role = user["Role"]
-                            st.session_state.user_department = user.get(
-                                "Department", "N/A"
-                            )
-                            st.session_state.last_activity = datetime.now()
-
-                            logger.info(f"Successful login: {username}")
-                            st.success(f"✅ ยินดีต้อนรับ {user.get('FullName', username)}!")
-                            time.sleep(1)
-                            st.rerun()
-                        else:
-                            st.error("❌ ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง")
-                            logger.warning(f"Failed login attempt: {username}")
-
-                    except Exception as e:
-                        error_handler.handle_error(e, "Authentication Error")
-                        st.error("🔧 เกิดข้อผิดพลาดในระบบ กรุณาลองใหม่อีกครั้ง")
-
-            st.markdown("</div>", unsafe_allow_html=True)
-
-        # Demo credentials
-        with st.expander("🔍 ข้อมูลสำหรับทดสอบ"):
-            st.markdown(
-                """
-            **Admin Account:**
-            - Username: `admin`
-            - Password: `admin123`
-            - Role: Administrator
-            
-            **User Account:**
-            - Username: `user`
-            - Password: `user123`
-            - Role: User
-            
-            **Manager Account:**
-            - Username: `manager`
-            - Password: `manager123`
-            - Role: Project Manager
-            """
-            )
+    # Demo credentials
+    st.info(
+        """
+    **🎯 ข้อมูลทดสอบ:**
+    - Admin: `admin` / `admin123`
+    - Manager: `manager` / `manager123`
+    - User: `user` / `user123`
+    """
+    )
 
 
-# Enhanced sidebar navigation
+# Navigation sidebar
 def render_sidebar():
-    """Render professional sidebar navigation"""
+    """แสดง sidebar navigation"""
+    modules = import_modules()
+    user = modules["get_current_user"]()
+    is_admin_user = modules["is_admin"]()
+
+    if not user:
+        return
+
     with st.sidebar:
-        # User info header
+        # User info
         st.markdown(
             f"""
-        <div style="
-            background: rgba(255,255,255,0.1);
-            padding: 1rem;
-            border-radius: 8px;
-            margin-bottom: 1rem;
-            text-align: center;
-        ">
-            <h3 style="color: white; margin: 0;">
-                👤 {st.session_state.username}
-            </h3>
-            <p style="color: rgba(255,255,255,0.8); margin: 0.5rem 0 0 0;">
-                {st.session_state.user_role} | {st.session_state.user_department}
-            </p>
+        <div style="text-align: center; padding: 1rem; background: rgba(255,255,255,0.1); 
+             border-radius: 0.5rem; margin-bottom: 1rem; color: white;">
+            <div style="font-size: 1.1rem; font-weight: 600;">
+                👤 {user.get('FirstName', '')} {user.get('LastName', '')}
+            </div>
+            <div style="opacity: 0.8; font-size: 0.9rem;">{user.get('Role', 'User')}</div>
         </div>
         """,
             unsafe_allow_html=True,
         )
 
         # Navigation menu
-        st.markdown("### 📋 เมนูหลัก")
+        pages = {
+            "🏠 แดชบอร์ด": "dashboard",
+            "📊 โครงการ": "projects",
+            "✅ งาน": "tasks",
+            "📈 รายงาน": "analytics",
+            "📁 ไฟล์": "files",
+        }
 
-        menu_items = [
-            ("🏠", "dashboard", "แดชบอร์ด"),
-            ("📊", "projects", "โครงการ"),
-            ("✅", "tasks", "งาน"),
-            ("👥", "team", "ทีม"),
-            ("📈", "analytics", "รายงาน"),
-            ("⚙️", "settings", "ตั้งค่า"),
-        ]
+        if is_admin_user:
+            pages.update({"👥 ผู้ใช้": "users", "⚙️ ตั้งค่า": "settings"})
 
-        for icon, key, label in menu_items:
-            if st.button(f"{icon} {label}", key=f"nav_{key}", use_container_width=True):
-                st.session_state.current_page = key
-                st.rerun()
+        selected = st.selectbox(
+            "📍 เมนูหลัก",
+            options=list(pages.keys()),
+            index=list(pages.values()).index(st.session_state.current_page),
+        )
 
-        st.markdown("---")
+        st.session_state.current_page = pages[selected]
 
         # Quick actions
-        st.markdown("### ⚡ Quick Actions")
+        st.markdown("---")
+        st.markdown("**🚀 การดำเนินการด่วน**")
 
         if st.button("➕ โครงการใหม่", use_container_width=True):
-            st.session_state.current_page = "projects"
-            st.session_state.action = "create_project"
-            st.rerun()
+            st.session_state.show_new_project = True
 
         if st.button("📝 งานใหม่", use_container_width=True):
-            st.session_state.current_page = "tasks"
-            st.session_state.action = "create_task"
-            st.rerun()
+            st.session_state.show_new_task = True
 
+        # System info
         st.markdown("---")
+        st.markdown("**📊 ข้อมูลระบบ**")
 
-        # Performance info
-        performance_monitor = PerformanceMonitor()
-        perf_data = performance_monitor.get_current_stats()
+        load_time = time.time() - APP_START_TIME
+        st.metric("⚡ เวลาโหลด", f"{load_time:.2f}s")
 
-        st.markdown("### 📊 System Status")
-        st.metric("CPU Usage", f"{perf_data.get('cpu_percent', 0):.1f}%")
-        st.metric("Memory", f"{perf_data.get('memory_percent', 0):.1f}%")
+        if st.session_state.login_time:
+            duration = datetime.now() - st.session_state.login_time
+            hours, remainder = divmod(duration.total_seconds(), 3600)
+            minutes, _ = divmod(remainder, 60)
+            st.metric("🕐 เวลาออนไลน์", f"{int(hours)}:{int(minutes):02d}")
 
-        # Logout button
+        # Logout
         st.markdown("---")
-        if st.button("🚪 ออกจากระบบ", use_container_width=True):
+        if st.button("🚪 ออกจากระบบ", type="primary", use_container_width=True):
+            # Clear session
             for key in list(st.session_state.keys()):
-                if key not in ["performance_data"]:
+                if key.startswith(("authenticated", "user", "login")):
                     del st.session_state[key]
             st.rerun()
 
 
-# Enhanced dashboard
+# Dashboard
 def render_dashboard():
-    """Render enterprise dashboard with real-time data"""
-    st.markdown("# 🏠 แดชบอร์ด SDX Project Manager")
-    st.markdown("---")
+    """แสดงหน้า dashboard หลัก"""
+    modules = import_modules()
+    user = modules["get_current_user"]()
 
+    if not user:
+        return
+
+    # Welcome section
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.markdown(
+            f"""
+        ### 👋 สวัสดี, {user.get('FirstName', '')} {user.get('LastName', '')}
+        **บทบาท:** {user.get('Role', 'User')} | **แผนก:** {user.get('Department', 'N/A')}
+        """
+        )
+
+    with col2:
+        if st.button("🔄 รีเฟรช", type="secondary"):
+            st.cache_data.clear()
+            st.rerun()
+
+    st.divider()
+
+    # Key metrics
     try:
-        # Load managers
-        project_manager = ProjectManager(db_manager)
-        task_manager = TaskManager(db_manager)
-        analytics_manager = AnalyticsManager(db_manager)
+        managers = st.session_state.get("managers")
+        if managers:
+            # Sample metrics (replace with real data)
+            col1, col2, col3, col4 = st.columns(4)
 
-        # Key metrics
-        col1, col2, col3, col4 = st.columns(4)
-
-        with col1:
-            total_projects = project_manager.get_project_count()
-            st.metric(
-                label="📊 โครงการทั้งหมด", value=total_projects, delta="+2 จากเดือนก่อน"
-            )
-
-        with col2:
-            active_tasks = task_manager.get_active_task_count()
-            st.metric(
-                label="✅ งานที่ดำเนินการ", value=active_tasks, delta="+5 จากสัปดาห์ก่อน"
-            )
-
-        with col3:
-            team_members = analytics_manager.get_team_member_count()
-            st.metric(label="👥 สมาชิกทีม", value=team_members, delta="+1 สมาชิกใหม่")
-
-        with col4:
-            completion_rate = analytics_manager.get_completion_rate()
-            st.metric(
-                label="🎯 อัตราความสำเร็จ", value=f"{completion_rate:.1f}%", delta="+2.3%"
-            )
-
-        st.markdown("---")
-
-        # Charts and analytics
-        col_left, col_right = st.columns([2, 1])
-
-        with col_left:
-            st.markdown("### 📈 ภาพรวมโครงการ")
-
-            # Project status chart
-            project_data = analytics_manager.get_project_status_distribution()
-            if project_data:
-                import plotly.express as px
-
-                fig = px.pie(
-                    values=list(project_data.values()),
-                    names=list(project_data.keys()),
-                    title="การกระจายสถานะโครงการ",
-                )
-                fig.update_traces(textposition="inside", textinfo="percent+label")
-                st.plotly_chart(fig, use_container_width=True)
-
-        with col_right:
-            st.markdown("### 🔔 การแจ้งเตือน")
-
-            # Recent notifications
-            notifications = [
-                "📝 งาน 'ออกแบบ UI' ใกล้ครบกำหนด",
-                "✅ โครงการ 'Website Redesign' อัปเดต",
-                "👤 สมาชิกใหม่เข้าร่วมทีม",
-                "📊 รายงานประจำสัปดาห์พร้อมแล้ว",
-            ]
-
-            for notif in notifications[:4]:
-                st.info(notif)
-
-        # Recent activity
-        st.markdown("### 📋 กิจกรรมล่าสุด")
-
-        recent_activities = analytics_manager.get_recent_activities(limit=10)
-        if recent_activities:
-            for activity in recent_activities:
-                with st.container():
-                    col_time, col_activity = st.columns([1, 4])
-                    with col_time:
-                        st.caption(activity.get("timestamp", "N/A"))
-                    with col_activity:
-                        st.write(activity.get("description", "N/A"))
-        else:
-            st.info("ไม่มีกิจกรรมล่าสุด")
+            with col1:
+                st.metric("📊 โครงการทั้งหมด", "12", "+2")
+            with col2:
+                st.metric("✅ งานเสร็จสิ้น", "48", "+8")
+            with col3:
+                st.metric("⏳ งานค้างอยู่", "15", "-3")
+            with col4:
+                st.metric("👥 สมาชิกทีม", "25", "+1")
 
     except Exception as e:
-        error_handler.handle_error(e, "Dashboard Error")
-        st.error("❌ เกิดข้อผิดพลาดในการโหลดแดชบอร์ด")
+        st.error("ไม่สามารถโหลดข้อมูลได้")
+        logger.error(f"Dashboard metrics error: {e}")
+
+    # Charts and activity
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.subheader("📈 สถิติโครงการ")
+        st.info("แผนภูมิจะแสดงเมื่อมีข้อมูล")
+
+    with col2:
+        st.subheader("🔔 กิจกรรมล่าสุด")
+
+        # Sample activities
+        activities = [
+            {"desc": "โครงการ A อัพเดทสถานะ", "time": "5 นาทีที่แล้ว"},
+            {"desc": "งาน B ได้รับการมอบหมาย", "time": "1 ชั่วโมงที่แล้ว"},
+            {"desc": "รายงาน C ถูกส่ง", "time": "2 ชั่วโมงที่แล้ว"},
+        ]
+
+        for activity in activities:
+            st.markdown(
+                f"""
+            <div class="metric-card" style="margin-bottom: 0.5rem; padding: 1rem;">
+                <div style="font-weight: 500;">{activity['desc']}</div>
+                <div style="font-size: 0.8rem; color: #64748b; margin-top: 0.25rem;">
+                    📅 {activity['time']}
+                </div>
+            </div>
+            """,
+                unsafe_allow_html=True,
+            )
 
 
-# Initialize database connection
-@st.cache_resource
-def get_db_manager():
-    """Initialize database manager with connection pooling"""
-    try:
-        return DatabaseManager()
-    except Exception as e:
-        logger.error(f"Database connection failed: {e}")
-        st.error("❌ ไม่สามารถเชื่อมต่อฐานข้อมูลได้")
-        st.stop()
+# Page router
+def render_page_content():
+    """จัดการการแสดงหน้าต่างๆ"""
+    page = st.session_state.current_page
+
+    if page == "dashboard":
+        render_dashboard()
+    elif page == "projects":
+        st.subheader("📊 จัดการโครงการ")
+        st.info("หน้าจัดการโครงการ - กำลังพัฒนา")
+    elif page == "tasks":
+        st.subheader("✅ จัดการงาน")
+        st.info("หน้าจัดการงาน - กำลังพัฒนา")
+    elif page == "analytics":
+        st.subheader("📈 รายงานและวิเคราะห์")
+        st.info("หน้ารายงาน - กำลังพัฒนา")
+    elif page == "files":
+        st.subheader("📁 จัดการไฟล์")
+        st.info("หน้าจัดการไฟล์ - กำลังพัฒนา")
+    elif page == "users":
+        st.subheader("👥 จัดการผู้ใช้")
+        st.info("หน้าจัดการผู้ใช้ - กำลังพัฒนา")
+    elif page == "settings":
+        st.subheader("⚙️ ตั้งค่าระบบ")
+        st.info("หน้าตั้งค่า - กำลังพัฒนา")
+    else:
+        st.error("❌ ไม่พบหน้าที่ร้องขอ")
 
 
-# Main application flow
+# Main application
 def main():
-    """Main application entry point"""
+    """ฟังก์ชันหลักของแอปพลิเคชัน"""
     try:
-        # Load CSS and initialize
-        load_professional_css()
-        initialize_session_state()
+        # Initialize components
+        load_enterprise_css()
+        initialize_session()
 
-        # Global database manager
-        global db_manager
-        db_manager = get_db_manager()
+        # Import modules
+        modules = import_modules()
+        modules["init_session_state"]()
 
-        # Session timeout check
-        check_session_timeout()
+        # Initialize managers
+        if "managers" not in st.session_state or st.session_state.managers is None:
+            with st.spinner("🔄 กำลังเริ่มต้นระบบ..."):
+                st.session_state.managers = get_managers()
 
-        # Render appropriate interface
+        # Render application
         if not st.session_state.authenticated:
-            render_login_page()
+            render_login()
         else:
-            # Authenticated interface
+            render_header()
             render_sidebar()
+            render_page_content()
 
-            # Main content area
-            if st.session_state.current_page == "dashboard":
-                render_dashboard()
-            elif st.session_state.current_page == "projects":
-                from projects_ui import render_projects_page
-
-                render_projects_page(db_manager)
-            elif st.session_state.current_page == "tasks":
-                from tasks_ui import render_tasks_page
-
-                render_tasks_page(db_manager)
-            elif st.session_state.current_page == "analytics":
-                from analytics_ui import render_analytics_page
-
-                render_analytics_page(db_manager)
-            elif st.session_state.current_page == "settings":
-                from settings_ui import render_settings_page
-
-                render_settings_page(db_manager)
-            else:
-                st.error(f"❌ ไม่พบหน้า: {st.session_state.current_page}")
-
-        # Performance logging
-        load_time = time.time() - start_time
+        # Performance footer
+        load_time = time.time() - APP_START_TIME
         if load_time > 2.0:
             logger.warning(f"Slow page load: {load_time:.2f}s")
 
     except Exception as e:
-        error_handler.handle_error(e, "Application Error")
-        st.error("🔧 เกิดข้อผิดพลาดระบบ กรุณาลองใหม่อีกครั้ง")
+        logger.error(f"Application error: {e}")
+        st.error(
+            f"""
+        🚨 **ข้อผิดพลาดระบบ**
+        
+        {str(e)}
+        
+        **วิธีแก้ไข:**
+        1. ตรวจสอบการเชื่อมต่อฐานข้อมูล
+        2. pip install -r requirements.txt
+        3. ตรวจสอบไฟล์ configuration
+        4. ดูรายละเอียดใน logs/app.log
+        """
+        )
 
 
+# Health check
+def health_check():
+    """ตรวจสอบสถานะระบบ"""
+    try:
+        managers = st.session_state.get("managers")
+        db_status = managers["db"].test_connection() if managers else False
+
+        return {
+            "status": "healthy" if db_status else "unhealthy",
+            "database": "connected" if db_status else "disconnected",
+            "timestamp": datetime.now().isoformat(),
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+# Application entry point
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+
+        # Log completion
+        total_time = time.time() - APP_START_TIME
+        logger.info(f"Application loaded in {total_time:.2f}s")
+
+    except Exception as e:
+        logger.critical(f"Failed to start application: {e}")
+        st.error("🚨 ไม่สามารถเริ่มต้นแอปพลิเคชันได้")
+    finally:
+        # Cleanup
+        try:
+            if "managers" in st.session_state and st.session_state.managers:
+                if hasattr(st.session_state.managers.get("db"), "close"):
+                    st.session_state.managers["db"].close()
+        except Exception:
+            pass

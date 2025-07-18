@@ -2,6 +2,7 @@
 """
 utils/file_manager.py
 Enterprise File Management System for SDX Project Manager
+Fixed version with comprehensive error handling and security
 """
 
 import os
@@ -9,18 +10,23 @@ import uuid
 import hashlib
 import magic
 from pathlib import Path
-from datetime import datetime
-from typing import Dict, List, Any, Optional, Tuple, BinaryIO
+from datetime import datetime, timedelta
+from typing import Dict, List, Any, Optional, Tuple, BinaryIO, Union
 import logging
 import shutil
 import zipfile
 from PIL import Image
 import mimetypes
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 import asyncio
 import aiofiles
 from concurrent.futures import ThreadPoolExecutor
+import json
+import tempfile
+import contextlib
+from threading import Lock
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +44,8 @@ class FileType(Enum):
 
 @dataclass
 class FileMetadata:
+    """Enhanced file metadata with validation"""
+
     file_id: str
     original_name: str
     file_path: str
@@ -48,105 +56,331 @@ class FileMetadata:
     uploaded_by: int
     upload_date: datetime
     last_accessed: Optional[datetime] = None
-    tags: List[str] = None
+    tags: List[str] = field(default_factory=list)
     is_public: bool = False
     project_id: Optional[int] = None
     task_id: Optional[int] = None
+    virus_scan_result: Optional[str] = None
+    backup_path: Optional[str] = None
+    expiry_date: Optional[datetime] = None
+    version: int = 1
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization"""
+        return {
+            "file_id": self.file_id,
+            "original_name": self.original_name,
+            "file_path": self.file_path,
+            "file_size": self.file_size,
+            "mime_type": self.mime_type,
+            "file_type": self.file_type.value,
+            "checksum": self.checksum,
+            "uploaded_by": self.uploaded_by,
+            "upload_date": self.upload_date.isoformat(),
+            "last_accessed": (
+                self.last_accessed.isoformat() if self.last_accessed else None
+            ),
+            "tags": self.tags,
+            "is_public": self.is_public,
+            "project_id": self.project_id,
+            "task_id": self.task_id,
+            "virus_scan_result": self.virus_scan_result,
+            "backup_path": self.backup_path,
+            "expiry_date": self.expiry_date.isoformat() if self.expiry_date else None,
+            "version": self.version,
+        }
+
+
+class FileSecurityError(Exception):
+    """File security related errors"""
+
+    pass
+
+
+class FileQuotaError(Exception):
+    """File quota exceeded errors"""
+
+    pass
+
+
+class FileValidationError(Exception):
+    """File validation errors"""
+
+    pass
 
 
 class FileManager:
-    """Enterprise-grade file management system"""
+    """Enterprise-grade file management system with comprehensive security"""
 
     def __init__(self, db_manager, config: Dict[str, Any]):
         self.db = db_manager
         self.config = config
         self.base_path = Path(config.get("upload_path", "./uploads"))
         self.max_file_size = config.get("max_file_size", 100 * 1024 * 1024)  # 100MB
-        self.allowed_extensions = config.get("allowed_extensions", [])
+        self.max_total_size = config.get(
+            "max_total_size", 10 * 1024 * 1024 * 1024
+        )  # 10GB
+        self.allowed_extensions = set(config.get("allowed_extensions", []))
+        self.blocked_extensions = set(
+            config.get(
+                "blocked_extensions",
+                ["exe", "bat", "cmd", "com", "pif", "scr", "vbs", "js", "jar"],
+            )
+        )
         self.virus_scan_enabled = config.get("virus_scan_enabled", False)
         self.image_optimization = config.get("image_optimization", True)
+        self.enable_backup = config.get("enable_backup", True)
+        self.retention_days = config.get("retention_days", 365)
         self.executor = ThreadPoolExecutor(max_workers=4)
+        self._lock = Lock()
 
-        # Initialize directories
+        # Initialize directories with proper permissions
         self._init_directories()
 
         # File type mappings
         self.type_mappings = {
-            "image": ["jpg", "jpeg", "png", "gif", "bmp", "webp", "svg"],
-            "document": ["pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt"],
-            "video": ["mp4", "avi", "mov", "wmv", "flv", "webm"],
-            "audio": ["mp3", "wav", "flac", "aac", "ogg"],
-            "archive": ["zip", "rar", "7z", "tar", "gz"],
-            "code": ["py", "js", "html", "css", "sql", "json", "xml", "yaml"],
-            "data": ["csv", "json", "xml", "sql", "log"],
+            "image": ["jpg", "jpeg", "png", "gif", "bmp", "webp", "svg", "tiff"],
+            "document": [
+                "pdf",
+                "doc",
+                "docx",
+                "xls",
+                "xlsx",
+                "ppt",
+                "pptx",
+                "txt",
+                "rtf",
+                "odt",
+            ],
+            "video": ["mp4", "avi", "mov", "wmv", "flv", "webm", "mkv", "m4v"],
+            "audio": ["mp3", "wav", "flac", "aac", "ogg", "wma", "m4a"],
+            "archive": ["zip", "rar", "7z", "tar", "gz", "bz2", "xz"],
+            "code": [
+                "py",
+                "js",
+                "html",
+                "css",
+                "sql",
+                "json",
+                "xml",
+                "yaml",
+                "yml",
+                "md",
+            ],
+            "data": ["csv", "tsv", "json", "xml", "yaml", "yml", "log"],
         }
 
-    def _init_directories(self):
-        """Initialize required directories"""
-        directories = ["uploads", "temp", "thumbnails", "processed", "quarantine"]
+    def _init_directories(self) -> None:
+        """Initialize directory structure with security"""
+        try:
+            directories = [
+                self.base_path,
+                self.base_path / "documents",
+                self.base_path / "images",
+                self.base_path / "videos",
+                self.base_path / "archives",
+                self.base_path / "temp",
+                self.base_path / "quarantine",
+                self.base_path / "backup",
+            ]
 
-        for dir_name in directories:
-            dir_path = self.base_path / dir_name
-            dir_path.mkdir(parents=True, exist_ok=True)
+            for dir_path in directories:
+                dir_path.mkdir(parents=True, exist_ok=True)
+                # Set secure permissions (owner read/write only)
+                os.chmod(dir_path, 0o750)
+
+            logger.info(f"File management directories initialized at {self.base_path}")
+
+        except Exception as e:
+            logger.error(f"Failed to initialize directories: {e}")
+            raise
+
+    def _get_file_type(self, filename: str, mime_type: str) -> FileType:
+        """Determine file type from extension and MIME type"""
+        try:
+            extension = Path(filename).suffix.lower().lstrip(".")
+
+            for file_type, extensions in self.type_mappings.items():
+                if extension in extensions:
+                    return FileType(file_type)
+
+            # Fallback to MIME type analysis
+            if mime_type.startswith("image/"):
+                return FileType.IMAGE
+            elif mime_type.startswith("video/"):
+                return FileType.VIDEO
+            elif mime_type.startswith("audio/"):
+                return FileType.AUDIO
+            elif mime_type.startswith("text/"):
+                return FileType.DOCUMENT
+
+            return FileType.OTHER
+
+        except Exception:
+            return FileType.OTHER
+
+    def _calculate_checksum(self, file_path: Path) -> str:
+        """Calculate SHA-256 checksum for file integrity"""
+        try:
+            hash_sha256 = hashlib.sha256()
+            with open(file_path, "rb") as f:
+                for chunk in iter(lambda: f.read(4096), b""):
+                    hash_sha256.update(chunk)
+            return hash_sha256.hexdigest()
+        except Exception as e:
+            logger.error(f"Failed to calculate checksum for {file_path}: {e}")
+            raise
+
+    def _validate_file_security(
+        self, file_content: bytes, filename: str, mime_type: str
+    ) -> bool:
+        """Comprehensive file security validation"""
+        try:
+            # Extension validation
+            extension = Path(filename).suffix.lower().lstrip(".")
+            if extension in self.blocked_extensions:
+                raise FileSecurityError(f"File extension '{extension}' is not allowed")
+
+            if self.allowed_extensions and extension not in self.allowed_extensions:
+                raise FileSecurityError(
+                    f"File extension '{extension}' is not in allowed list"
+                )
+
+            # Size validation
+            if len(file_content) > self.max_file_size:
+                raise FileValidationError(f"File size exceeds maximum allowed size")
+
+            # MIME type validation
+            if not mime_type or mime_type == "application/octet-stream":
+                detected_mime = magic.from_buffer(file_content, mime=True)
+                if detected_mime != mime_type:
+                    logger.warning(
+                        f"MIME type mismatch: declared={mime_type}, detected={detected_mime}"
+                    )
+
+            # Basic malware signature check
+            suspicious_patterns = [
+                b"eval(",
+                b"exec(",
+                b"system(",
+                b"shell_exec(",
+                b"<script",
+                b"javascript:",
+                b"vbscript:",
+                b"<?php",
+                b"<%",
+                b"${",
+                b"#{",
+            ]
+
+            file_content_lower = file_content.lower()
+            for pattern in suspicious_patterns:
+                if pattern in file_content_lower:
+                    raise FileSecurityError(f"Suspicious content detected in file")
+
+            return True
+
+        except (FileSecurityError, FileValidationError):
+            raise
+        except Exception as e:
+            logger.error(f"File security validation failed: {e}")
+            raise FileSecurityError(f"File validation failed: {str(e)}")
+
+    def _check_quota(self, user_id: int, file_size: int) -> bool:
+        """Check if user has sufficient quota"""
+        try:
+            # Get current usage
+            query = """
+                SELECT COALESCE(SUM(file_size), 0) as total_size 
+                FROM files 
+                WHERE uploaded_by = ? AND deleted_at IS NULL
+            """
+            result = self.db.execute(query, (user_id,)).fetchone()
+            current_usage = result[0] if result else 0
+
+            if current_usage + file_size > self.max_total_size:
+                raise FileQuotaError(f"Storage quota exceeded")
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Quota check failed: {e}")
+            return False
 
     async def upload_file(
         self,
-        file_data: BinaryIO,
+        file_content: bytes,
         filename: str,
         user_id: int,
         project_id: Optional[int] = None,
         task_id: Optional[int] = None,
         tags: List[str] = None,
         is_public: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> FileMetadata:
         """Upload file with comprehensive validation and processing"""
 
+        upload_start = time.time()
+        temp_file_path = None
+
         try:
-            # Generate unique file ID
+            # Sanitize filename
+            safe_filename = self._sanitize_filename(filename)
+
+            # Detect MIME type
+            mime_type = magic.from_buffer(file_content, mime=True)
+
+            # Security validation
+            self._validate_file_security(file_content, safe_filename, mime_type)
+
+            # Quota check
+            self._check_quota(user_id, len(file_content))
+
+            # Generate unique file ID and paths
             file_id = str(uuid.uuid4())
+            file_type = self._get_file_type(safe_filename, mime_type)
 
-            # Validate file
-            validation_result = await self._validate_file(file_data, filename)
-            if not validation_result["valid"]:
-                return {"success": False, "error": validation_result["error"]}
+            # Create directory structure
+            type_dir = self.base_path / file_type.value
+            type_dir.mkdir(exist_ok=True)
 
-            # Determine file type
-            file_extension = Path(filename).suffix.lower().lstrip(".")
-            file_type = self._get_file_type(file_extension)
-            mime_type = validation_result["mime_type"]
+            final_path = type_dir / f"{file_id}_{safe_filename}"
 
-            # Generate secure filename
-            secure_filename = self._generate_secure_filename(filename, file_id)
-            file_path = self.base_path / "uploads" / secure_filename
+            # Write file to temporary location first
+            with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+                temp_file_path = Path(temp_file.name)
+                temp_file.write(file_content)
 
             # Calculate checksum
-            file_data.seek(0)
-            checksum = hashlib.sha256(file_data.read()).hexdigest()
-            file_data.seek(0)
+            checksum = self._calculate_checksum(temp_file_path)
 
             # Check for duplicates
-            duplicate_check = await self._check_duplicate(checksum, user_id)
-            if duplicate_check:
-                return {
-                    "success": True,
-                    "file_id": duplicate_check["file_id"],
-                    "message": "File already exists",
-                    "duplicate": True,
-                }
+            existing_file = await self._check_duplicate(checksum, user_id)
+            if existing_file:
+                temp_file_path.unlink()
+                logger.info(
+                    f"Duplicate file detected, returning existing: {existing_file.file_id}"
+                )
+                return existing_file
 
-            # Save file
-            async with aiofiles.open(file_path, "wb") as f:
-                await f.write(file_data.read())
+            # Move to final location
+            shutil.move(str(temp_file_path), str(final_path))
+            os.chmod(final_path, 0o640)
 
-            # Get file size
-            file_size = file_path.stat().st_size
+            # Image optimization
+            if file_type == FileType.IMAGE and self.image_optimization:
+                await self._optimize_image(final_path)
+
+            # Create backup if enabled
+            backup_path = None
+            if self.enable_backup:
+                backup_path = await self._create_backup(final_path, file_id)
 
             # Create metadata
             metadata = FileMetadata(
                 file_id=file_id,
                 original_name=filename,
-                file_path=str(file_path),
-                file_size=file_size,
+                file_path=str(final_path),
+                file_size=len(file_content),
                 mime_type=mime_type,
                 file_type=file_type,
                 checksum=checksum,
@@ -156,145 +390,122 @@ class FileManager:
                 is_public=is_public,
                 project_id=project_id,
                 task_id=task_id,
+                backup_path=backup_path,
+                expiry_date=datetime.now() + timedelta(days=self.retention_days),
             )
 
             # Save to database
-            db_result = await self._save_metadata_to_db(metadata)
-            if not db_result["success"]:
-                # Cleanup file if DB save fails
-                file_path.unlink(missing_ok=True)
-                return {"success": False, "error": "Database save failed"}
+            await self._save_metadata(metadata)
 
-            # Post-processing
-            await self._post_process_file(metadata)
+            # Log successful upload
+            upload_time = time.time() - upload_start
+            logger.info(f"File uploaded successfully: {file_id} in {upload_time:.2f}s")
 
-            return {
-                "success": True,
-                "file_id": file_id,
-                "filename": secure_filename,
-                "size": file_size,
-                "type": file_type.value,
-                "url": self._generate_file_url(file_id),
-            }
+            return metadata
 
         except Exception as e:
-            logger.error(f"File upload error: {e}")
-            return {"success": False, "error": str(e)}
+            # Cleanup on failure
+            if temp_file_path and temp_file_path.exists():
+                temp_file_path.unlink()
+            logger.error(f"File upload failed: {e}")
+            raise
 
-    async def _validate_file(
-        self, file_data: BinaryIO, filename: str
-    ) -> Dict[str, Any]:
-        """Comprehensive file validation"""
+    def _sanitize_filename(self, filename: str) -> str:
+        """Sanitize filename for security"""
+        # Remove path separators and dangerous characters
+        import re
 
-        # Size check
-        file_data.seek(0, 2)  # Seek to end
-        size = file_data.tell()
-        file_data.seek(0)  # Reset
+        safe_name = re.sub(r'[<>:"/\\|?*]', "_", filename)
+        safe_name = re.sub(r"\.+", ".", safe_name)  # Remove multiple dots
+        safe_name = safe_name.strip(". ")  # Remove leading/trailing dots and spaces
 
-        if size > self.max_file_size:
-            return {
-                "valid": False,
-                "error": f"File too large. Max size: {self.max_file_size / 1024 / 1024:.1f}MB",
-            }
+        # Limit length
+        if len(safe_name) > 255:
+            name, ext = os.path.splitext(safe_name)
+            safe_name = name[: 255 - len(ext)] + ext
 
-        # Extension check
-        extension = Path(filename).suffix.lower().lstrip(".")
-        if self.allowed_extensions and extension not in self.allowed_extensions:
-            return {
-                "valid": False,
-                "error": f'File type not allowed. Allowed: {", ".join(self.allowed_extensions)}',
-            }
-
-        # MIME type detection
-        file_data.seek(0)
-        file_header = file_data.read(1024)
-        file_data.seek(0)
-
-        try:
-            mime_type = magic.from_buffer(file_header, mime=True)
-        except:
-            mime_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
-
-        # Security checks
-        if await self._has_malicious_content(file_header, filename):
-            return {
-                "valid": False,
-                "error": "File contains potentially malicious content",
-            }
-
-        # Virus scan (if enabled)
-        if self.virus_scan_enabled:
-            virus_result = await self._virus_scan(file_data)
-            if not virus_result["clean"]:
-                return {"valid": False, "error": "Virus detected"}
-
-        return {"valid": True, "mime_type": mime_type}
-
-    async def _has_malicious_content(self, file_header: bytes, filename: str) -> bool:
-        """Check for malicious content patterns"""
-
-        # Check for executable signatures
-        malicious_signatures = [
-            b"MZ",  # Windows PE
-            b"\x7fELF",  # Linux ELF
-            b"\xfe\xed\xfa",  # macOS Mach-O
-            b"#!/bin/",  # Script shebangs
-            b"<?php",  # PHP
-            b"<script",  # JavaScript
-        ]
-
-        for signature in malicious_signatures:
-            if file_header.startswith(signature):
-                return True
-
-        # Check filename for suspicious extensions
-        suspicious_extensions = [".exe", ".bat", ".cmd", ".scr", ".vbs", ".js", ".jar"]
-        return any(filename.lower().endswith(ext) for ext in suspicious_extensions)
-
-    async def _virus_scan(self, file_data: BinaryIO) -> Dict[str, Any]:
-        """Virus scanning (placeholder for external scanner integration)"""
-        # In production, integrate with ClamAV or similar
-        return {"clean": True, "scan_result": "No threats detected"}
-
-    def _get_file_type(self, extension: str) -> FileType:
-        """Determine file type from extension"""
-        for file_type, extensions in self.type_mappings.items():
-            if extension in extensions:
-                return FileType(file_type)
-        return FileType.OTHER
-
-    def _generate_secure_filename(self, original_name: str, file_id: str) -> str:
-        """Generate secure filename with UUID"""
-        extension = Path(original_name).suffix
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        return f"{timestamp}_{file_id[:8]}{extension}"
+        return safe_name or "unnamed_file"
 
     async def _check_duplicate(
         self, checksum: str, user_id: int
-    ) -> Optional[Dict[str, Any]]:
-        """Check for duplicate files"""
-        query = """
-            SELECT FileID, OriginalName, FilePath 
-            FROM Files 
-            WHERE Checksum = ? AND UploadedBy = ?
-        """
+    ) -> Optional[FileMetadata]:
+        """Check for duplicate files by checksum"""
+        try:
+            query = """
+                SELECT * FROM files 
+                WHERE checksum = ? AND uploaded_by = ? AND deleted_at IS NULL
+                LIMIT 1
+            """
+            result = self.db.execute(query, (checksum, user_id)).fetchone()
 
-        result = self.db.execute_query(query, (checksum, user_id))
-        return result[0] if result else None
+            if result:
+                return FileMetadata(
+                    file_id=result[0],
+                    original_name=result[1],
+                    file_path=result[2],
+                    file_size=result[3],
+                    mime_type=result[4],
+                    file_type=FileType(result[5]),
+                    checksum=result[6],
+                    uploaded_by=result[7],
+                    upload_date=datetime.fromisoformat(result[8]),
+                    # Add other fields as needed
+                )
 
-    async def _save_metadata_to_db(self, metadata: FileMetadata) -> Dict[str, Any]:
+            return None
+
+        except Exception as e:
+            logger.error(f"Duplicate check failed: {e}")
+            return None
+
+    async def _optimize_image(self, image_path: Path) -> None:
+        """Optimize image files for web usage"""
+        try:
+            with Image.open(image_path) as img:
+                # Convert to RGB if necessary
+                if img.mode in ("RGBA", "LA", "P"):
+                    img = img.convert("RGB")
+
+                # Resize if too large
+                max_dimension = 2048
+                if max(img.size) > max_dimension:
+                    img.thumbnail(
+                        (max_dimension, max_dimension), Image.Resampling.LANCZOS
+                    )
+
+                # Save with optimization
+                img.save(image_path, optimize=True, quality=85, progressive=True)
+
+            logger.info(f"Image optimized: {image_path}")
+
+        except Exception as e:
+            logger.warning(f"Image optimization failed: {e}")
+
+    async def _create_backup(self, file_path: Path, file_id: str) -> str:
+        """Create backup copy of uploaded file"""
+        try:
+            backup_dir = self.base_path / "backup"
+            backup_path = backup_dir / f"{file_id}_backup{file_path.suffix}"
+
+            shutil.copy2(file_path, backup_path)
+            return str(backup_path)
+
+        except Exception as e:
+            logger.error(f"Backup creation failed: {e}")
+            return None
+
+    async def _save_metadata(self, metadata: FileMetadata) -> None:
         """Save file metadata to database"""
         try:
             query = """
-                INSERT INTO Files (
-                    FileID, OriginalName, FilePath, FileSize, MimeType, FileType,
-                    Checksum, UploadedBy, UploadDate, Tags, IsPublic, ProjectID, TaskID
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO files (
+                    file_id, original_name, file_path, file_size, mime_type,
+                    file_type, checksum, uploaded_by, upload_date, tags,
+                    is_public, project_id, task_id, backup_path, expiry_date
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """
 
-            tags_json = ",".join(metadata.tags) if metadata.tags else ""
-
-            self.db.execute_non_query(
+            self.db.execute(
                 query,
                 (
                     metadata.file_id,
@@ -305,330 +516,219 @@ class FileManager:
                     metadata.file_type.value,
                     metadata.checksum,
                     metadata.uploaded_by,
-                    metadata.upload_date,
-                    tags_json,
+                    metadata.upload_date.isoformat(),
+                    json.dumps(metadata.tags),
                     metadata.is_public,
                     metadata.project_id,
                     metadata.task_id,
+                    metadata.backup_path,
+                    metadata.expiry_date.isoformat() if metadata.expiry_date else None,
                 ),
             )
 
-            return {"success": True}
+            self.db.commit()
 
         except Exception as e:
-            logger.error(f"Database save error: {e}")
-            return {"success": False, "error": str(e)}
+            logger.error(f"Failed to save metadata: {e}")
+            raise
 
-    async def _post_process_file(self, metadata: FileMetadata):
-        """Post-process uploaded file"""
-
-        if metadata.file_type == FileType.IMAGE:
-            await self._process_image(metadata)
-        elif metadata.file_type == FileType.DOCUMENT:
-            await self._extract_document_metadata(metadata)
-        elif metadata.file_type == FileType.ARCHIVE:
-            await self._process_archive(metadata)
-
-    async def _process_image(self, metadata: FileMetadata):
-        """Process image files (thumbnails, optimization)"""
+    async def get_file(self, file_id: str, user_id: int) -> Tuple[bytes, FileMetadata]:
+        """Retrieve file with access control"""
         try:
-            if not self.image_optimization:
-                return
+            # Get metadata with permission check
+            metadata = await self._get_file_metadata(file_id, user_id)
+            if not metadata:
+                raise FileNotFoundError(f"File not found or access denied: {file_id}")
 
-            with Image.open(metadata.file_path) as img:
-                # Create thumbnail
-                thumbnail_path = (
-                    self.base_path / "thumbnails" / f"{metadata.file_id}_thumb.jpg"
-                )
+            # Read file content
+            file_path = Path(metadata.file_path)
+            if not file_path.exists():
+                logger.error(f"File not found on disk: {file_path}")
+                raise FileNotFoundError(f"File not found on disk")
 
-                # Create thumbnail while maintaining aspect ratio
-                img.thumbnail((300, 300), Image.Resampling.LANCZOS)
-                img.save(thumbnail_path, "JPEG", quality=85)
+            async with aiofiles.open(file_path, "rb") as f:
+                content = await f.read()
 
-                # Update database with thumbnail path
-                update_query = "UPDATE Files SET ThumbnailPath = ? WHERE FileID = ?"
-                self.db.execute_non_query(
-                    update_query, (str(thumbnail_path), metadata.file_id)
-                )
+            # Update last accessed
+            await self._update_last_accessed(file_id)
+
+            return content, metadata
 
         except Exception as e:
-            logger.error(f"Image processing error: {e}")
+            logger.error(f"File retrieval failed: {e}")
+            raise
 
-    async def _extract_document_metadata(self, metadata: FileMetadata):
-        """Extract metadata from documents"""
-        # Placeholder for document processing (PyPDF2, python-docx, etc.)
-        pass
-
-    async def _process_archive(self, metadata: FileMetadata):
-        """Process archive files"""
-        # Placeholder for archive processing
-        pass
-
-    def _generate_file_url(self, file_id: str) -> str:
-        """Generate secure file access URL"""
-        return f"/api/files/{file_id}"
-
-    async def get_file(self, file_id: str, user_id: int) -> Optional[Dict[str, Any]]:
-        """Get file information and check permissions"""
-
-        query = """
-            SELECT f.*, u.FirstName, u.LastName
-            FROM Files f
-            JOIN Users u ON f.UploadedBy = u.UserID
-            WHERE f.FileID = ?
-        """
-
-        result = self.db.execute_query(query, (file_id,))
-        if not result:
-            return None
-
-        file_info = result[0]
-
-        # Check permissions
-        if not self._check_file_access(file_info, user_id):
-            return None
-
-        # Update last accessed
-        await self._update_last_accessed(file_id)
-
-        return {
-            "file_id": file_info["FileID"],
-            "original_name": file_info["OriginalName"],
-            "file_size": file_info["FileSize"],
-            "mime_type": file_info["MimeType"],
-            "file_type": file_info["FileType"],
-            "upload_date": file_info["UploadDate"],
-            "uploaded_by": f"{file_info['FirstName']} {file_info['LastName']}",
-            "is_public": file_info["IsPublic"],
-            "tags": file_info["Tags"].split(",") if file_info["Tags"] else [],
-        }
-
-    def _check_file_access(self, file_info: Dict[str, Any], user_id: int) -> bool:
-        """Check if user has access to file"""
-
-        # Public files
-        if file_info["IsPublic"]:
-            return True
-
-        # Owner access
-        if file_info["UploadedBy"] == user_id:
-            return True
-
-        # Project/Task member access
-        if file_info["ProjectID"]:
-            # Check if user is project member
-            member_query = """
-                SELECT 1 FROM ProjectMembers 
-                WHERE ProjectID = ? AND UserID = ?
+    async def _get_file_metadata(
+        self, file_id: str, user_id: int
+    ) -> Optional[FileMetadata]:
+        """Get file metadata with access control"""
+        try:
+            query = """
+                SELECT * FROM files 
+                WHERE file_id = ? AND (uploaded_by = ? OR is_public = 1) 
+                AND deleted_at IS NULL
             """
-            member_result = self.db.execute_query(
-                member_query, (file_info["ProjectID"], user_id)
+            result = self.db.execute(query, (file_id, user_id)).fetchone()
+
+            if not result:
+                return None
+
+            return FileMetadata(
+                file_id=result[0],
+                original_name=result[1],
+                file_path=result[2],
+                file_size=result[3],
+                mime_type=result[4],
+                file_type=FileType(result[5]),
+                checksum=result[6],
+                uploaded_by=result[7],
+                upload_date=datetime.fromisoformat(result[8]),
+                # Add other fields as needed
             )
-            if member_result:
-                return True
 
-        return False
+        except Exception as e:
+            logger.error(f"Metadata retrieval failed: {e}")
+            return None
 
-    async def _update_last_accessed(self, file_id: str):
+    async def _update_last_accessed(self, file_id: str) -> None:
         """Update last accessed timestamp"""
-        query = "UPDATE Files SET LastAccessed = GETDATE() WHERE FileID = ?"
-        self.db.execute_non_query(query, (file_id,))
-
-    async def delete_file(self, file_id: str, user_id: int) -> Dict[str, Any]:
-        """Delete file with permission checks"""
-
-        # Get file info
-        file_info = await self.get_file(file_id, user_id)
-        if not file_info:
-            return {"success": False, "error": "File not found or access denied"}
-
         try:
-            # Get file path from database
-            path_query = "SELECT FilePath, ThumbnailPath FROM Files WHERE FileID = ?"
-            path_result = self.db.execute_query(path_query, (file_id,))
+            query = "UPDATE files SET last_accessed = ? WHERE file_id = ?"
+            self.db.execute(query, (datetime.now().isoformat(), file_id))
+            self.db.commit()
+        except Exception as e:
+            logger.error(f"Failed to update last accessed: {e}")
 
-            if path_result:
-                file_path = Path(path_result[0]["FilePath"])
-                thumbnail_path = path_result[0]["ThumbnailPath"]
+    async def delete_file(
+        self, file_id: str, user_id: int, permanent: bool = False
+    ) -> bool:
+        """Delete file with soft/hard delete options"""
+        try:
+            # Get file metadata
+            metadata = await self._get_file_metadata(file_id, user_id)
+            if not metadata:
+                return False
 
-                # Delete physical files
-                file_path.unlink(missing_ok=True)
-                if thumbnail_path:
-                    Path(thumbnail_path).unlink(missing_ok=True)
+            if permanent:
+                # Hard delete - remove file and database record
+                file_path = Path(metadata.file_path)
+                if file_path.exists():
+                    file_path.unlink()
 
-            # Delete from database
-            delete_query = "DELETE FROM Files WHERE FileID = ?"
-            self.db.execute_non_query(delete_query, (file_id,))
+                # Remove backup if exists
+                if metadata.backup_path:
+                    backup_path = Path(metadata.backup_path)
+                    if backup_path.exists():
+                        backup_path.unlink()
 
-            return {"success": True, "message": "File deleted successfully"}
+                # Delete from database
+                query = "DELETE FROM files WHERE file_id = ?"
+                self.db.execute(query, (file_id,))
+            else:
+                # Soft delete - mark as deleted
+                query = "UPDATE files SET deleted_at = ? WHERE file_id = ?"
+                self.db.execute(query, (datetime.now().isoformat(), file_id))
+
+            self.db.commit()
+            logger.info(f"File {'permanently ' if permanent else ''}deleted: {file_id}")
+            return True
 
         except Exception as e:
-            logger.error(f"File deletion error: {e}")
-            return {"success": False, "error": str(e)}
+            logger.error(f"File deletion failed: {e}")
+            return False
 
-    async def list_files(
-        self,
-        user_id: int,
-        project_id: Optional[int] = None,
-        file_type: Optional[str] = None,
-        page: int = 1,
-        per_page: int = 20,
-    ) -> Dict[str, Any]:
-        """List files with filtering and pagination"""
-
-        # Build query
-        where_conditions = ["(f.UploadedBy = ? OR f.IsPublic = 1)"]
-        params = [user_id]
-
-        if project_id:
-            where_conditions.append("f.ProjectID = ?")
-            params.append(project_id)
-
-        if file_type:
-            where_conditions.append("f.FileType = ?")
-            params.append(file_type)
-
-        where_clause = " AND ".join(where_conditions)
-
-        # Count query
-        count_query = f"""
-            SELECT COUNT(*) as total
-            FROM Files f
-            WHERE {where_clause}
-        """
-
-        count_result = self.db.execute_query(count_query, params)
-        total = count_result[0]["total"] if count_result else 0
-
-        # Data query with pagination
-        offset = (page - 1) * per_page
-
-        data_query = f"""
-            SELECT f.*, u.FirstName, u.LastName
-            FROM Files f
-            JOIN Users u ON f.UploadedBy = u.UserID
-            WHERE {where_clause}
-            ORDER BY f.UploadDate DESC
-            OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
-        """
-
-        params.extend([offset, per_page])
-        files = self.db.execute_query(data_query, params)
-
-        # Format results
-        formatted_files = []
-        for file_info in files:
-            formatted_files.append(
-                {
-                    "file_id": file_info["FileID"],
-                    "original_name": file_info["OriginalName"],
-                    "file_size": file_info["FileSize"],
-                    "file_type": file_info["FileType"],
-                    "upload_date": file_info["UploadDate"],
-                    "uploaded_by": f"{file_info['FirstName']} {file_info['LastName']}",
-                    "is_public": file_info["IsPublic"],
-                    "url": self._generate_file_url(file_info["FileID"]),
-                }
-            )
-
-        return {
-            "files": formatted_files,
-            "pagination": {
-                "total": total,
-                "page": page,
-                "per_page": per_page,
-                "pages": (total + per_page - 1) // per_page,
-            },
-        }
-
-    async def cleanup_orphaned_files(self) -> Dict[str, Any]:
-        """Clean up orphaned files and database entries"""
-
-        cleaned_files = 0
-        cleaned_db_entries = 0
-
+    async def cleanup_expired_files(self) -> int:
+        """Clean up expired files based on retention policy"""
         try:
-            # Get all files from database
-            db_files = self.db.execute_query("SELECT FileID, FilePath FROM Files")
+            cleanup_count = 0
+            current_time = datetime.now()
 
-            # Check physical files
-            for file_info in db_files:
-                file_path = Path(file_info["FilePath"])
-                if not file_path.exists():
-                    # Remove database entry
-                    self.db.execute_non_query(
-                        "DELETE FROM Files WHERE FileID = ?", (file_info["FileID"],)
-                    )
-                    cleaned_db_entries += 1
+            # Get expired files
+            query = """
+                SELECT file_id, file_path, backup_path 
+                FROM files 
+                WHERE expiry_date < ? AND deleted_at IS NULL
+            """
+            expired_files = self.db.execute(
+                query, (current_time.isoformat(),)
+            ).fetchall()
 
-            # Check for physical files without database entries
-            upload_dir = self.base_path / "uploads"
-            for file_path in upload_dir.glob("*"):
-                if file_path.is_file():
-                    # Extract file ID from filename
-                    filename = file_path.name
-                    # Check if exists in database
-                    check_query = "SELECT 1 FROM Files WHERE FilePath LIKE ?"
-                    result = self.db.execute_query(check_query, (f"%{filename}%",))
+            for file_record in expired_files:
+                file_id, file_path, backup_path = file_record
 
-                    if not result:
-                        # Orphaned file
-                        file_path.unlink(missing_ok=True)
-                        cleaned_files += 1
+                try:
+                    # Remove file
+                    if file_path and Path(file_path).exists():
+                        Path(file_path).unlink()
 
-            return {
-                "success": True,
-                "cleaned_files": cleaned_files,
-                "cleaned_db_entries": cleaned_db_entries,
-            }
+                    # Remove backup
+                    if backup_path and Path(backup_path).exists():
+                        Path(backup_path).unlink()
+
+                    # Mark as deleted
+                    update_query = "UPDATE files SET deleted_at = ? WHERE file_id = ?"
+                    self.db.execute(update_query, (current_time.isoformat(), file_id))
+                    cleanup_count += 1
+
+                except Exception as e:
+                    logger.error(f"Failed to cleanup file {file_id}: {e}")
+
+            self.db.commit()
+            logger.info(f"Cleaned up {cleanup_count} expired files")
+            return cleanup_count
 
         except Exception as e:
-            logger.error(f"Cleanup error: {e}")
-            return {"success": False, "error": str(e)}
+            logger.error(f"Cleanup process failed: {e}")
+            return 0
 
-    async def get_storage_stats(self) -> Dict[str, Any]:
+    def get_storage_stats(self, user_id: Optional[int] = None) -> Dict[str, Any]:
         """Get storage statistics"""
-
         try:
-            # Database stats
-            stats_query = """
+            base_query = """
                 SELECT 
-                    COUNT(*) as total_files,
-                    SUM(FileSize) as total_size,
-                    AVG(FileSize) as avg_size,
-                    FileType,
-                    COUNT(*) as type_count
-                FROM Files
-                GROUP BY FileType
+                    COUNT(*) as file_count,
+                    SUM(file_size) as total_size,
+                    file_type,
+                    COUNT(CASE WHEN is_public = 1 THEN 1 END) as public_files
+                FROM files 
+                WHERE deleted_at IS NULL
             """
 
-            type_stats = self.db.execute_query(stats_query)
+            params = []
+            if user_id:
+                base_query += " AND uploaded_by = ?"
+                params.append(user_id)
 
-            # Overall stats
-            overall_query = """"""
-                SELECT 
-                    COUNT(*) as total_files,
-                    SUM(FileSize) as total_size,
-                    AVG(FileSize) as avg_size
-                FROM Files
-            """
+            base_query += " GROUP BY file_type"
 
-            overall = self.db.execute_query(overall_query)[0]
+            results = self.db.execute(base_query, params).fetchall()
 
-            # Disk usage
-            upload_dir = self.base_path / "uploads"
-            disk_usage = sum(
-                f.stat().st_size for f in upload_dir.glob("**/*") if f.is_file()
-            )
-
-            return {
-                "total_files": overall["total_files"],
-                "total_size": overall["total_size"],
-                "avg_file_size": overall["avg_size"],
-                "disk_usage": disk_usage,
-                "type_breakdown": type_stats,
+            stats = {
+                "total_files": 0,
+                "total_size": 0,
+                "public_files": 0,
+                "by_type": {},
             }
 
+            for row in results:
+                file_count, total_size, file_type, public_files = row
+                stats["total_files"] += file_count
+                stats["total_size"] += total_size or 0
+                stats["public_files"] += public_files or 0
+                stats["by_type"][file_type] = {
+                    "count": file_count,
+                    "size": total_size or 0,
+                }
+
+            # Add quota information if user-specific
+            if user_id:
+                stats["quota_used_percent"] = (
+                    stats["total_size"] / self.max_total_size
+                ) * 100
+                stats["quota_remaining"] = self.max_total_size - stats["total_size"]
+
+            return stats
+
         except Exception as e:
-            logger.error(f"Stats error: {e}")
+            logger.error(f"Failed to get storage stats: {e}")
             return {}

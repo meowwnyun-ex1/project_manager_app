@@ -1,0 +1,52 @@
+{
+  "metadata": {
+    "generated_at": "2025-07-18T16:29:00.246558",
+    "environment": "production",
+    "version": "2.5.0",
+    "security_level": "enterprise-grade",
+    "expires_at": "2026-07-18T16:29:00.246558"
+  },
+  "application": {
+    "secret_key": "2phfn8hdugJzVpXSOF20AXdDLe-HEiH-jwZZXWZbUeqK09bfmWGlAWDmE4Y66u8H",
+    "app_id": "sdx_e1a65cd09e12baf3",
+    "instance_id": "inst_fa29cf828a4b"
+  },
+  "jwt": {
+    "access_secret": "U1XsjmpMFoBcL3UIfZ4V08ffd6BSmPG3_Gd1ES--FvblbcIUUTpi1Rql9XhhUFCjrSY7kS5_emnEH06mOtM0eQ",
+    "refresh_secret": "p2o0YWlZO0wetyzFRMj5ymBm8VyFXQISxtXX-8tquSVuwEOxag31nBKKnqMa0dXGATL6eraAwEjVGfxaoVUTWw",
+    "signing_key": "YB1hw3Ib0msNfTuVliKftb599RslhxJA4zpt2bueVwWmJyE2jjK-qkAQhhasTqht",
+    "verification_key": "FZJ3R3YFUNCrty7wgwr6I9RNH6SYa2gItKL-tJ06_dcBwJG8m7HbnUxFC3ldhUeN"
+  },
+  "encryption": {
+    "fernet_key": "Ot25jSbMrG8M4kxL0y7uDif5_fPnyQSWm2HlnBx5Fc8=",
+    "data_encryption_key": "f8SkSCXSRyEPvhNdblwe9focsA1lMi6fj2CcXjtiJ2U",
+    "field_encryption_key": "kB4-6cleQVmMovwMpuyfJdczg5Lp3fss2iGSKXrbdkY",
+    "file_encryption_key": "d6wfau-Qh-wMZk8mQwI16HWEu54_Shwtm66QdNBOR-c",
+    "backup_encryption_key": "uPxrUFQpNcDVC0bb2bUkPJLw43IwJR_XbmXpYsXmPWEnQQoQzdqaejUci-zbTkTA"
+  },
+  "api": {
+    "api_key": "sdx_W4o6u6fXYx13Z-YdzkiaSxq4rEg7IpKZfAHtHOuiTfI",
+    "api_secret": "lhC_d-_Ai1KKxPOVa8JDePPscFJzkcNTZcoMBY8qgIF6neHf432aq25Gb6WuPExX",
+    "webhook_secret": "Dm09PjQ3a5uavcIBup-jMZXs6BWnG2EQGeNUZp255bE",
+    "csrf_token": "QHeoppdZHeliFTQNEh9nVeEy5E1ai4VF",
+    "request_signing_key": "CnM2Jpud7h0CWJOUcI8akf3DrIuf-npyJHIoMmfMaQk"
+  },
+  "session": {
+    "session_secret": "5pD9q44TK8eGguoIP18XKaNTUib5HOl-CAukJZ8oMkBXk6tsKqDeUW6dxdkwzxls",
+    "cookie_secret": "E8ZiaJ4OLqik1tsUus9HepCmHRa0NHrC3btC-a07pvk",
+    "remember_me_key": "03XRXsYeoknvFo-V8K1y0Jin4brm3mIyXAbdLtqGkmg",
+    "csrf_protection_key": "Eis5I4Ac4eqFKT7b28TvLaEcehI1yDlx"
+  },
+  "database": {
+    "db_encryption_key": "3YJc7NBn3G6SLbiZoETXPUoIIsFDF-plGfMuWEc74rQ",
+    "backup_encryption_key": "bcBjgQMmoehj_ueYKn-zkdMUJAZeyND3d8SVezEOCToNfbHukuRiB9uPqtbWrCYc",
+    "audit_signing_key": "7ul8persveKU_1A47M5m-id_CbUgrRfN3pZauiPCKZE",
+    "connection_secret": "aWJdQiQKxo-06DgncRW5AesI2VgNgAkT"
+  },
+  "integration": {
+    "oauth_client_secret": "g-iBGUsdERiH8w-SJLow0YbSz1Hy6f83Jkxubmf2drPzEPNJafp9w6MtkB8dO0R5",
+    "webhook_verification_key": "nPW4RvzTLy0LZaYP-mCRL7suTu7GnwSserIUexfUDlc",
+    "api_rate_limit_key": "HjyBXkchNzrdOoeGUwGS7yOMwCI69DBF",
+    "external_service_key": "ZV-m03LljhSdpPOrQe7uEdO0fyEjfobmKOJFHUNVY4M"
+  }
+}
